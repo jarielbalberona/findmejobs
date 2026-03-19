@@ -30,7 +30,7 @@ class GreenhouseAdapter(SourceAdapter):
                     source_url=absolute_url,
                     apply_url=absolute_url,
                     title=title,
-                    company=config.name,
+                    company=_company_name(job, config.company_name),
                     location_text=(job.get("location") or {}).get("name", ""),
                     posted_at_raw=job.get("updated_at") or job.get("created_at"),
                     description_raw=job.get("content"),
@@ -39,3 +39,11 @@ class GreenhouseAdapter(SourceAdapter):
                 )
             )
         return records
+
+
+def _company_name(job: dict, configured_company_name: str | None) -> str:
+    for key in ("company", "companyName", "organization"):
+        value = str(job.get(key, "")).strip()
+        if value:
+            return value
+    return configured_company_name or "Unknown"

@@ -9,6 +9,9 @@ class CanonicalJob(BaseModel):
     source_job_id: str
     source_id: str
     source_job_key: str
+    source_name: str | None = None
+    source_trust_weight: float = 1.0
+    source_priority: int = 0
     canonical_url: str | None = None
     company_name: str
     title: str

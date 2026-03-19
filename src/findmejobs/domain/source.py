@@ -5,6 +5,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field, HttpUrl
 
+PREDICTABLE_ATS_KINDS = frozenset({"greenhouse", "lever", "ashby", "smartrecruiters"})
+PH_BOARD_KINDS = frozenset({"jobstreet_ph", "kalibrr", "bossjob_ph", "foundit_ph"})
+DIRECT_PAGE_KINDS = frozenset({"direct_page"})
+DISCOVERY_KINDS = frozenset({"rss"})
+
 
 class FetchArtifact(BaseModel):
     fetched_url: str
@@ -32,3 +37,15 @@ class SourceJobRecord(BaseModel):
     description_raw: str | None = None
     tags_raw: list[str] = Field(default_factory=list)
     raw_payload: dict[str, Any] = Field(default_factory=dict)
+
+
+def source_family_for_kind(kind: str) -> str:
+    if kind in PREDICTABLE_ATS_KINDS:
+        return "predictable_ats"
+    if kind in PH_BOARD_KINDS:
+        return "ph_board"
+    if kind in DIRECT_PAGE_KINDS:
+        return "direct_page"
+    if kind in DISCOVERY_KINDS:
+        return "feed"
+    return "unknown"

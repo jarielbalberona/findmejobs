@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from findmejobs.config.models import AppConfig, ProfileConfig
-from findmejobs.db.models import JobCluster, JobScore, NormalizedJob, OpenClawReview, ReviewPacket
+from findmejobs.db.models import JobCluster, JobScore, NormalizedJob, OpenClawReview, RankModel, ReviewPacket
 from findmejobs.db.repositories import upsert_review_packet
 from findmejobs.domain.job import CanonicalJob
 from findmejobs.review.client import FilesystemOpenClawClient
@@ -19,9 +19,11 @@ def export_review_packets(session: Session, app_config: AppConfig, profile: Prof
     stmt = (
         select(JobCluster, JobScore, NormalizedJob)
         .join(JobScore, JobScore.cluster_id == JobCluster.id)
+        .join(RankModel, RankModel.id == JobScore.rank_model_id)
         .join(NormalizedJob, NormalizedJob.id == JobCluster.representative_job_id)
         .where(JobScore.passed_hard_filters.is_(True))
         .where(JobScore.score_total >= profile.ranking.minimum_score)
+        .where(RankModel.version == profile.rank_model_version)
     )
     exported = 0
     for cluster, score, job_row in session.execute(stmt):

@@ -1,0 +1,19 @@
+{
+  "jobs": [
+    {
+      "id": "ashby-1",
+      "title": "Senior Platform Engineer",
+      "jobUrl": "https://jobs.example.test/ashby/platform",
+      "applyUrl": "https://jobs.example.test/ashby/platform/apply",
+      "publishedAt": "2026-03-16T08:00:00Z",
+      "descriptionHtml": "<p>Python, SQL, distributed systems.</p>",
+      "location": {
+        "locationName": "Remote"
+      },
+      "employmentType": "Full-Time",
+      "teams": [
+        {"name": "Infrastructure"}
+      ]
+    }
+  ]
+}

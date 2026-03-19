@@ -16,7 +16,12 @@ class Source(Base):
     name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     kind: Mapped[str] = mapped_column(String(50), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    trust_weight: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    fetch_cap: Mapped[int | None] = mapped_column(Integer)
     config_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    last_successful_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_failed_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -32,6 +37,15 @@ class SourceFetchRun(Base):
     http_status: Mapped[int | None] = mapped_column(Integer)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     item_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    raw_seen_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    seen_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    skipped_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    inserted_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    parse_error_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    dedupe_merge_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    normalized_valid_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_code: Mapped[str | None] = mapped_column(String(64))
     error_message: Mapped[str | None] = mapped_column(Text)
 
@@ -156,6 +170,18 @@ class JobScore(Base):
     scored_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
 
 
+class JobFeedback(Base):
+    __tablename__ = "job_feedback"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True)
+    cluster_id: Mapped[str | None] = mapped_column(ForeignKey("job_clusters.id"), index=True)
+    feedback_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    company_name: Mapped[str | None] = mapped_column(String(255), index=True)
+    title_keyword: Mapped[str | None] = mapped_column(String(255), index=True)
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+
+
 class ReviewPacket(Base):
     __tablename__ = "review_packets"
     __table_args__ = (
@@ -199,3 +225,46 @@ class PipelineRun(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     stats_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     error_message: Mapped[str | None] = mapped_column(Text)
+
+
+class Digest(Base):
+    __tablename__ = "digests"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True)
+    channel: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    digest_date: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    window_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    body_text: Mapped[str] = mapped_column(Text, nullable=False)
+    resend_of_digest_id: Mapped[str | None] = mapped_column(ForeignKey("digests.id"))
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class DigestItem(Base):
+    __tablename__ = "digest_items"
+    __table_args__ = (UniqueConstraint("digest_id", "cluster_id", name="uq_digest_cluster"),)
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True)
+    digest_id: Mapped[str] = mapped_column(ForeignKey("digests.id"), nullable=False, index=True)
+    cluster_id: Mapped[str] = mapped_column(ForeignKey("job_clusters.id"), nullable=False, index=True)
+    review_id: Mapped[str] = mapped_column(ForeignKey("openclaw_reviews.id"), nullable=False, index=True)
+    job_score_id: Mapped[str] = mapped_column(ForeignKey("job_scores.id"), nullable=False, index=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    item_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    score_at_send: Mapped[float] = mapped_column(Float, nullable=False)
+
+
+class DeliveryEvent(Base):
+    __tablename__ = "delivery_events"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True)
+    digest_id: Mapped[str | None] = mapped_column(ForeignKey("digests.id"), index=True)
+    channel: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    provider_message_id: Mapped[str | None] = mapped_column(String(255))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)

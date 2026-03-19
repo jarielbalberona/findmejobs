@@ -22,11 +22,16 @@ def test_migrations_apply_cleanly_and_hot_indexes_exist(migrated_db_url: str) ->
     engine = create_engine_with_sqlite_pragmas(migrated_db_url)
     inspector = inspect(engine)
     assert "sources" in inspector.get_table_names()
+    assert "job_feedback" in inspector.get_table_names()
+    assert "digests" in inspector.get_table_names()
+    assert "delivery_events" in inspector.get_table_names()
     normalized_indexes = {index["name"] for index in inspector.get_indexes("normalized_jobs")}
     review_indexes = {index["name"] for index in inspector.get_indexes("review_packets")}
+    feedback_indexes = {index["name"] for index in inspector.get_indexes("job_feedback")}
     assert "ix_normalized_jobs_canonical_url" in normalized_indexes
     assert "ix_normalized_jobs_company_name" in normalized_indexes
     assert "ix_review_packets_status" in review_indexes
+    assert "ix_job_feedback_feedback_type" in feedback_indexes
 
 
 def test_uniqueness_constraints_behave_correctly(session_factory) -> None:

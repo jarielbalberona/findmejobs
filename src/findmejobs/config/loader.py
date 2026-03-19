@@ -59,6 +59,9 @@ def _load_yaml_profile_config(profile_path: Path) -> ProfileConfig:
     return ProfileConfig(
         version=profile.version,
         rank_model_version=ranking.rank_model_version,
+        full_name=profile.full_name,
+        email=profile.email,
+        location_text=profile.location_text,
         target_titles=profile.target_titles,
         required_skills=profile.required_skills,
         preferred_skills=profile.preferred_skills,
@@ -71,7 +74,12 @@ def _load_yaml_profile_config(profile_path: Path) -> ProfileConfig:
             blocked_companies=ranking.blocked_companies or [],
             blocked_title_keywords=ranking.blocked_title_keywords or [],
             require_remote=bool(ranking.require_remote),
+            remote_first=bool(ranking.remote_first),
             allowed_countries=profile.allowed_countries,
+            allowed_companies=ranking.allowed_companies or [],
+            preferred_companies=ranking.preferred_companies or [],
+            preferred_timezones=ranking.preferred_timezones or [],
+            title_families=ranking.title_families or {},
             weights=ranking.weights,
         ),
     )

@@ -1,0 +1,15 @@
+[
+  {
+    "id": "lever-1",
+    "text": "Senior Backend Engineer",
+    "hostedUrl": "https://jobs.example.test/lever/backend",
+    "applyUrl": "https://jobs.example.test/lever/backend/apply",
+    "createdAt": "2026-03-18T12:00:00Z",
+    "descriptionPlain": "Build Python services with SQL and AWS.",
+    "categories": {
+      "location": "Remote, Philippines",
+      "commitment": "Full-time",
+      "team": "Platform"
+    }
+  }
+]

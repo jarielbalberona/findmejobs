@@ -1,0 +1,28 @@
+{
+  "data": {
+    "jobs": [
+      {
+        "job_id": "boss-3001",
+        "job_url": "https://bossjob.ph/job/data-engineer-3001?from=feed",
+        "job_name": "Data Engineer",
+        "company": {
+          "company_name": "Bossjob Data Corp"
+        },
+        "location": {
+          "city": "Pasig",
+          "region": "Metro Manila",
+          "country": "Philippines"
+        },
+        "posted_at": "2026-03-16T08:00:00Z",
+        "employment_type": "Full-time",
+        "salary_min": 100000,
+        "salary_max": 140000,
+        "currency": "PHP",
+        "salary_period": "month",
+        "industry": "Data",
+        "experience_level": "Mid",
+        "job_summary": "<p>Build ETL systems with SQL and Python.</p>"
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "jobs": [
+    {
+      "jobId": "foundit-4001",
+      "jobUrl": "https://www.foundit.ph/job/site-reliability-engineer-4001?utm_medium=jobfeed",
+      "title": "Site Reliability Engineer",
+      "companyName": "Foundit Reliability Inc",
+      "locations": ["Remote, Philippines"],
+      "postedDate": "2026-03-15T07:00:00Z",
+      "employmentType": "Full-time",
+      "salaryText": "PHP 130,000 - 170,000 / month",
+      "functions": ["Infrastructure"],
+      "skills": ["Python", "AWS"],
+      "jobDescription": "<div><p>Operate reliable cloud systems.</p></div>"
+    }
+  ]
+}

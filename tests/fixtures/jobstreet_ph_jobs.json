@@ -1,0 +1,23 @@
+{
+  "data": {
+    "jobs": [
+      {
+        "jobId": "js-1001",
+        "jobUrl": "https://www.jobstreet.com.ph/job/backend-engineer-1001?tracking=abc",
+        "jobTitle": "Backend Engineer",
+        "companyName": "Acme Philippines",
+        "location": "Taguig City, Metro Manila",
+        "listingDate": "2026-03-18T09:00:00Z",
+        "employmentType": "Full-time",
+        "specialization": "Engineering",
+        "salary": {
+          "min": 90000,
+          "max": 120000,
+          "currency": "PHP",
+          "period": "month"
+        },
+        "jobDescription": "<div><p>Build Python APIs with SQL and AWS.</p></div>"
+      }
+    ]
+  }
+}

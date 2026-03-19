@@ -15,3 +15,18 @@ user_agent = "findmejobs/0.1.0"
 
 [logging]
 level = "INFO"
+
+[delivery]
+channel = "email"
+daily_hour = 8
+digest_max_items = 10
+
+[delivery.email]
+enabled = false
+host = "smtp.example.com"
+port = 587
+username = ""
+password = ""
+use_tls = true
+sender = "findmejobs@example.com"
+recipient = "operator@example.com"

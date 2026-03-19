@@ -1,0 +1,29 @@
+{
+  "jobs": [
+    {
+      "id": "kal-2001",
+      "slug": "senior-platform-engineer",
+      "job_url": "https://www.kalibrr.com/c/acme/jobs/senior-platform-engineer?utm_source=kalibrr",
+      "title": "Senior Platform Engineer",
+      "company": {
+        "name": "Kalibrr Example Co"
+      },
+      "locations": [
+        {
+          "name": "Makati City"
+        }
+      ],
+      "published_at": "2026-03-17T10:30:00Z",
+      "employment_type": "Full-time",
+      "salary": {
+        "from": 110000,
+        "to": 150000,
+        "currency": "PHP",
+        "period": "month"
+      },
+      "description": "<p>Own platform services in Python and Kubernetes.</p>",
+      "tags": ["Python", "Kubernetes"],
+      "departments": ["Platform"]
+    }
+  ]
+}

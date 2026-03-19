@@ -51,6 +51,7 @@ def normalize_job(source_job_id: str, source_id: str, seen_at, record: SourceJob
     seniority = infer_seniority(record.seniority_raw or title)
     employment_type = infer_employment_type(record.employment_type_raw or description_text)
     tags = normalize_tags(record.tags_raw, title, description_text)
+    salary_min, salary_max, salary_currency, salary_period = parse_salary(record.salary_raw or description_text)
     return CanonicalJob(
         source_job_id=source_job_id,
         source_id=source_id,
@@ -63,6 +64,10 @@ def normalize_job(source_job_id: str, source_id: str, seen_at, record: SourceJob
         country_code=country_code,
         seniority=seniority,
         employment_type=employment_type,
+        salary_min=salary_min,
+        salary_max=salary_max,
+        salary_currency=salary_currency,
+        salary_period=salary_period,
         description_text=description_text,
         tags=tags,
         posted_at=posted_at,
@@ -116,6 +121,24 @@ def normalize_tags(tags_raw: list[str], title: str, description_text: str) -> li
     skill_candidates = re.findall(r"\b(python|django|fastapi|sql|aws|kubernetes|react)\b", f"{title} {description_text}".casefold())
     tags.update(skill_candidates)
     return sorted(tags)
+
+
+def parse_salary(value: str | None) -> tuple[int | None, int | None, str | None, str | None]:
+    if not value:
+        return None, None, None, None
+    lowered = value.casefold()
+    currency = None
+    if "usd" in lowered or "$" in value:
+        currency = "USD"
+    elif "php" in lowered or "₱" in value:
+        currency = "PHP"
+    period = "year" if any(token in lowered for token in ("per year", "/year", "annual", "yr")) else None
+    matches = [int(match.replace(",", "")) for match in re.findall(r"\b\d{2,3}(?:,\d{3})+\b", value)]
+    if len(matches) >= 2:
+        return min(matches), max(matches), currency, period
+    if len(matches) == 1:
+        return matches[0], matches[0], currency, period
+    return None, None, currency, period
 
 
 def description_hash(value: str) -> str:

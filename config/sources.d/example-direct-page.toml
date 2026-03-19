@@ -1,0 +1,7 @@
+name = "example-direct-page"
+kind = "direct_page"
+enabled = false
+priority = 5
+trust_weight = 0.8
+page_url = "https://example.com/careers/backend-engineer"
+company_name = "Example"

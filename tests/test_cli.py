@@ -7,7 +7,7 @@ import httpx
 from sqlalchemy import func, select
 
 from findmejobs.cli.app import app
-from findmejobs.config.loader import load_app_config
+from findmejobs.config.loader import load_app_config, load_profile_config
 from findmejobs.db.models import JobCluster, JobScore, NormalizedJob, PipelineRun, Profile, RankModel, RawDocument, Source, SourceFetchRun, SourceJob
 from findmejobs.db.session import create_session_factory
 from findmejobs.utils.time import utcnow
@@ -213,6 +213,7 @@ def test_rank_command_only_scores_valid_jobs(
 ) -> None:
     app_path, profile_path, sources_dir = migrated_runtime_config_files
     app_config = load_app_config(app_path)
+    profile_config = load_profile_config(profile_path)
     session_factory = create_session_factory(app_config.database.url)
     with session_factory() as session:
         _seed_cluster(
@@ -261,6 +262,7 @@ def test_review_command_only_exports_sanitized_packets(
 ) -> None:
     app_path, profile_path, sources_dir = migrated_runtime_config_files
     app_config = load_app_config(app_path)
+    profile_config = load_profile_config(profile_path)
     session_factory = create_session_factory(app_config.database.url)
     now = utcnow()
     with session_factory() as session:
@@ -280,7 +282,15 @@ def test_review_command_only_exports_sanitized_packets(
         )
         session.flush()
         session.add(Profile(id="profile-1", version="v1", profile_json={}, created_at=now, is_active=True))
-        session.add(RankModel(id="model-1", version="m1", config_json={}, created_at=now, is_active=True))
+        session.add(
+            RankModel(
+                id="model-1",
+                version=profile_config.rank_model_version,
+                config_json=profile_config.ranking.model_dump(mode="json"),
+                created_at=now,
+                is_active=True,
+            )
+        )
         session.flush()
         session.add(
             JobScore(

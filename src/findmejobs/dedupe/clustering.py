@@ -3,13 +3,13 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from findmejobs.db.models import JobCluster, JobClusterMember, NormalizedJob
+from findmejobs.db.models import JobCluster, JobClusterMember, NormalizedJob, Source, SourceJob
 from findmejobs.dedupe.matcher import find_cluster_for_job
 from findmejobs.utils.hashing import sha256_hexdigest
 from findmejobs.utils.time import utcnow
 
 
-def assign_job_cluster(session: Session, job: NormalizedJob, id_factory) -> JobCluster:
+def assign_job_cluster(session: Session, job: NormalizedJob, id_factory) -> tuple[JobCluster, bool]:
     session.flush()
     existing = session.scalar(
         select(JobCluster)
@@ -17,7 +17,7 @@ def assign_job_cluster(session: Session, job: NormalizedJob, id_factory) -> JobC
         .where(JobClusterMember.normalized_job_id == job.id)
     )
     if existing:
-        return existing
+        return existing, True
 
     match = find_cluster_for_job(session, job)
     now = utcnow()
@@ -42,7 +42,7 @@ def assign_job_cluster(session: Session, job: NormalizedJob, id_factory) -> JobC
             )
         )
         session.flush()
-        return cluster
+        return cluster, False
 
     cluster = match.cluster
     cluster.updated_at = now
@@ -58,7 +58,7 @@ def assign_job_cluster(session: Session, job: NormalizedJob, id_factory) -> JobC
     )
     cluster.representative_job_id = choose_representative_job(session, cluster, job)
     session.flush()
-    return cluster
+    return cluster, True
 
 
 def choose_representative_job(session: Session, cluster: JobCluster, candidate: NormalizedJob) -> str:
@@ -71,11 +71,25 @@ def choose_representative_job(session: Session, cluster: JobCluster, candidate: 
     members = list({member.id: member for member in members}.values())
     best = sorted(
         members,
-        key=lambda item: (
-            1 if item.salary_max or item.salary_min else 0,
-            len(item.description_text or ""),
-            item.last_seen_at,
-        ),
+        key=lambda item: _representative_sort_key(session, item),
         reverse=True,
     )[0]
     return best.id
+
+
+def _representative_sort_key(session: Session, job: NormalizedJob) -> tuple[float, int, int, int, object]:
+    source = session.execute(
+        select(Source)
+        .join(SourceJob, SourceJob.source_id == Source.id)
+        .where(SourceJob.id == job.source_job_id)
+        .limit(1)
+    ).scalar_one_or_none()
+    trust_weight = source.trust_weight if source is not None else 1.0
+    priority = source.priority if source is not None else 0
+    return (
+        trust_weight,
+        priority,
+        1 if job.salary_max or job.salary_min else 0,
+        len(job.description_text or ""),
+        job.last_seen_at,
+    )

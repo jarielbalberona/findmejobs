@@ -1,0 +1,7 @@
+name = "example-bossjob-ph"
+kind = "bossjob_ph"
+enabled = false
+priority = 4
+trust_weight = 0.65
+fetch_cap = 50
+board_url = "https://api.example.com/bossjob-ph/jobs"

@@ -52,9 +52,14 @@ class RankingConfigDraft(BaseModel):
     minimum_score: float = 45.0
     minimum_salary: int | None = None
     require_remote: bool | None = None
+    remote_first: bool | None = None
     relocation_allowed: bool | None = None
     blocked_companies: list[str] | None = None
     blocked_title_keywords: list[str] | None = None
+    allowed_companies: list[str] | None = None
+    preferred_companies: list[str] | None = None
+    preferred_timezones: list[str] | None = None
+    title_families: dict[str, list[str]] | None = None
     weights: RankingWeights = Field(default_factory=RankingWeights)
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 
 from alembic.script import ScriptDirectory
@@ -7,7 +8,8 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from findmejobs.config.loader import load_profile_config
-from findmejobs.db.models import OpenClawReview, PipelineRun, ReviewPacket, Source, SourceFetchRun
+from findmejobs.db.models import DeliveryEvent, Digest, OpenClawReview, PipelineRun, ReviewPacket, Source, SourceFetchRun
+from findmejobs.domain.source import PH_BOARD_KINDS
 from findmejobs.db.session import database_file_from_url, fetch_pragma
 from findmejobs.utils.time import ensure_utc, utcnow
 
@@ -31,6 +33,7 @@ def run_doctor(session: Session, database_url: str, required_paths: list[Path]) 
     _check_pipeline_health(session, errors)
     _check_source_failures(session, errors)
     _check_review_backlog(session, errors)
+    _check_delivery_health(session, errors)
     return errors
 
 
@@ -77,13 +80,16 @@ def _check_source_failures(session: Session, errors: list[str]) -> None:
         recent_runs = session.scalars(
             select(SourceFetchRun)
             .where(SourceFetchRun.source_id == source.id)
-            .order_by(SourceFetchRun.started_at.desc())
+            .order_by(SourceFetchRun.started_at.desc(), SourceFetchRun.id.desc())
             .limit(3)
         ).all()
         if len(recent_runs) < 3:
             continue
         if all(run.status == "failed" for run in recent_runs):
             errors.append(f"source_repeated_failures:{source.name}")
+            continue
+        if source.kind in PH_BOARD_KINDS and _has_partial_degradation(recent_runs):
+            errors.append(f"source_partial_degradation:{source.name}")
 
 
 def _check_review_backlog(session: Session, errors: list[str]) -> None:
@@ -96,3 +102,31 @@ def _check_review_backlog(session: Session, errors: list[str]) -> None:
     )
     if exported_without_review and exported_without_review > 50:
         errors.append("review_backlog_high")
+
+
+def _check_delivery_health(session: Session, errors: list[str]) -> None:
+    latest_digest = session.scalar(select(Digest).order_by(Digest.sent_at.desc()).limit(1))
+    if latest_digest is not None and latest_digest.status == "failed":
+        errors.append("latest_digest_failed")
+    recent_failed_deliveries = session.scalar(
+        select(func.count())
+        .select_from(DeliveryEvent)
+        .where(DeliveryEvent.status == "failed")
+        .where(DeliveryEvent.created_at >= utcnow() - timedelta(days=1))
+    )
+    if recent_failed_deliveries and recent_failed_deliveries > 3:
+        errors.append("delivery_failures_high")
+
+
+def _has_partial_degradation(runs: list[SourceFetchRun]) -> bool:
+    degraded_runs = 0
+    for run in runs:
+        if run.status != "success":
+            continue
+        if run.raw_seen_count <= 0:
+            continue
+        if run.skipped_count <= 0:
+            continue
+        if (run.skipped_count / run.raw_seen_count) >= 0.2:
+            degraded_runs += 1
+    return degraded_runs >= 2

@@ -5,6 +5,10 @@ from sqlalchemy.orm import Session
 
 from findmejobs.config.models import ProfileConfig, SourceConfig
 from findmejobs.db.models import (
+    DeliveryEvent,
+    Digest,
+    DigestItem,
+    JobFeedback,
     JobScore,
     NormalizedJob,
     PipelineRun,
@@ -30,6 +34,9 @@ def upsert_source(session: Session, config: SourceConfig, id_factory) -> Source:
             name=config.name,
             kind=config.kind,
             enabled=config.enabled,
+            priority=config.priority,
+            trust_weight=config.trust_weight,
+            fetch_cap=config.fetch_cap,
             config_json=config.model_dump(mode="json"),
             created_at=now,
             updated_at=now,
@@ -39,6 +46,9 @@ def upsert_source(session: Session, config: SourceConfig, id_factory) -> Source:
         return source
     source.kind = config.kind
     source.enabled = config.enabled
+    source.priority = config.priority
+    source.trust_weight = config.trust_weight
+    source.fetch_cap = config.fetch_cap
     source.config_json = config.model_dump(mode="json")
     source.updated_at = now
     return source
@@ -64,6 +74,15 @@ def finish_fetch_run(
     status: str,
     http_status: int | None,
     item_count: int,
+    raw_seen_count: int = 0,
+    seen_count: int = 0,
+    skipped_count: int = 0,
+    inserted_count: int = 0,
+    updated_count: int = 0,
+    failed_count: int = 0,
+    parse_error_count: int = 0,
+    dedupe_merge_count: int = 0,
+    normalized_valid_count: int = 0,
     error_code: str | None = None,
     error_message: str | None = None,
 ) -> None:
@@ -71,6 +90,15 @@ def finish_fetch_run(
     fetch_run.status = status
     fetch_run.http_status = http_status
     fetch_run.item_count = item_count
+    fetch_run.raw_seen_count = raw_seen_count
+    fetch_run.seen_count = seen_count
+    fetch_run.skipped_count = skipped_count
+    fetch_run.inserted_count = inserted_count
+    fetch_run.updated_count = updated_count
+    fetch_run.failed_count = failed_count
+    fetch_run.parse_error_count = parse_error_count
+    fetch_run.dedupe_merge_count = dedupe_merge_count
+    fetch_run.normalized_valid_count = normalized_valid_count
     fetch_run.error_code = error_code
     fetch_run.error_message = error_message
 
@@ -105,7 +133,7 @@ def upsert_source_job(
     fetch_run_id: str,
     record,
     id_factory,
-) -> SourceJob:
+) -> tuple[SourceJob, bool]:
     source_job = session.scalar(
         select(SourceJob).where(SourceJob.source_id == source_id, SourceJob.source_job_key == record.source_job_key)
     )
@@ -124,7 +152,7 @@ def upsert_source_job(
         )
         session.add(source_job)
         session.flush()
-        return source_job
+        return source_job, True
     source_job.raw_document_id = raw_document_id
     source_job.fetch_run_id = fetch_run_id
     source_job.source_url = record.source_url
@@ -132,10 +160,10 @@ def upsert_source_job(
     source_job.payload_json = record.raw_payload
     source_job.seen_at = now
     source_job.closed_at = None
-    return source_job
+    return source_job, False
 
 
-def upsert_normalized_job(session: Session, job: CanonicalJob, id_factory) -> NormalizedJob:
+def upsert_normalized_job(session: Session, job: CanonicalJob, id_factory) -> tuple[NormalizedJob, bool]:
     normalized = session.scalar(select(NormalizedJob).where(NormalizedJob.source_job_id == job.source_job_id))
     status = "valid" if not job.normalization_errors else "invalid"
     if normalized is None:
@@ -167,7 +195,7 @@ def upsert_normalized_job(session: Session, job: CanonicalJob, id_factory) -> No
         )
         session.add(normalized)
         session.flush()
-        return normalized
+        return normalized, True
 
     normalized.canonical_url = job.canonical_url
     normalized.company_name = job.company_name
@@ -190,7 +218,7 @@ def upsert_normalized_job(session: Session, job: CanonicalJob, id_factory) -> No
     normalized.last_seen_at = job.last_seen_at
     normalized.normalization_status = status
     normalized.normalization_errors_json = job.normalization_errors
-    return normalized
+    return normalized, False
 
 
 def upsert_profile(session: Session, profile_config: ProfileConfig, id_factory) -> Profile:
@@ -314,3 +342,88 @@ def finish_pipeline_run(run: PipelineRun, status: str, stats: dict | None = None
     run.status = status
     run.stats_json = stats or {}
     run.error_message = error_message
+
+
+def create_job_feedback(
+    session: Session,
+    *,
+    id_factory,
+    feedback_type: str,
+    cluster_id: str | None = None,
+    company_name: str | None = None,
+    title_keyword: str | None = None,
+    notes: str | None = None,
+) -> JobFeedback:
+    record = JobFeedback(
+        id=id_factory(),
+        cluster_id=cluster_id,
+        feedback_type=feedback_type,
+        company_name=company_name,
+        title_keyword=title_keyword,
+        notes=notes,
+        created_at=utcnow(),
+    )
+    session.add(record)
+    session.flush()
+    return record
+
+
+def create_digest(session: Session, *, id_factory, channel: str, digest_date: str, window_start, window_end, subject: str, body_text: str, resend_of_digest_id: str | None = None) -> Digest:
+    digest = Digest(
+        id=id_factory(),
+        channel=channel,
+        digest_date=digest_date,
+        window_start=window_start,
+        window_end=window_end,
+        status="built",
+        subject=subject,
+        body_text=body_text,
+        resend_of_digest_id=resend_of_digest_id,
+    )
+    session.add(digest)
+    session.flush()
+    return digest
+
+
+def add_digest_item(session: Session, *, id_factory, digest_id: str, cluster_id: str, review_id: str, job_score_id: str, position: int, item_json: dict, score_at_send: float) -> DigestItem:
+    item = DigestItem(
+        id=id_factory(),
+        digest_id=digest_id,
+        cluster_id=cluster_id,
+        review_id=review_id,
+        job_score_id=job_score_id,
+        position=position,
+        item_json=item_json,
+        score_at_send=score_at_send,
+    )
+    session.add(item)
+    session.flush()
+    return item
+
+
+def create_delivery_event(
+    session: Session,
+    *,
+    id_factory,
+    channel: str,
+    status: str,
+    attempt: int,
+    digest_id: str | None = None,
+    provider_message_id: str | None = None,
+    error_message: str | None = None,
+    metadata_json: dict | None = None,
+) -> DeliveryEvent:
+    event = DeliveryEvent(
+        id=id_factory(),
+        digest_id=digest_id,
+        channel=channel,
+        status=status,
+        attempt=attempt,
+        provider_message_id=provider_message_id,
+        error_message=error_message,
+        metadata_json=metadata_json or {},
+        created_at=utcnow(),
+    )
+    session.add(event)
+    session.flush()
+    return event

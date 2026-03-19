@@ -1,0 +1,21 @@
+{
+  "content": [
+    {
+      "id": "sr-1",
+      "name": "Platform Engineer",
+      "ref": "https://jobs.example.test/smart/platform",
+      "applyUrl": "https://jobs.example.test/smart/platform/apply",
+      "releasedDate": "2026-03-17T10:00:00Z",
+      "typeOfEmployment": "FULL_TIME",
+      "department": {"label": "Engineering"},
+      "location": {"city": "Manila", "country": "Philippines"},
+      "jobAd": {
+        "sections": {
+          "jobDescription": {
+            "text": "Own backend systems with Python and SQL."
+          }
+        }
+      }
+    }
+  ]
+}

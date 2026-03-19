@@ -1,0 +1,7 @@
+name = "example-ashby"
+kind = "ashby"
+enabled = false
+priority = 20
+trust_weight = 1.1
+company_name = "Example"
+board_url = "https://jobs.ashbyhq.com/example"

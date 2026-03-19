@@ -1,0 +1,8 @@
+name = "example-smartrecruiters"
+kind = "smartrecruiters"
+enabled = false
+priority = 20
+trust_weight = 1.0
+company_name = "Example"
+company_identifier = "Example"
+limit = 100

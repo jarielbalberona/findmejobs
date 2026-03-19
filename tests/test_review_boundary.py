@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from findmejobs.domain.job import CanonicalJob
-from findmejobs.domain.review import ReviewPacketModel
+from findmejobs.domain.review import MAX_RAW_RESPONSE_KEYS, ReviewPacketModel, ReviewResultModel
 from findmejobs.review.client import FilesystemOpenClawClient
 from findmejobs.review.packets import MAX_PACKET_BYTES, build_review_packet
 from findmejobs.utils.time import utcnow
@@ -77,3 +77,24 @@ def test_openclaw_client_accepts_only_sanitized_packet_models(tmp_path: Path) ->
     assert json.loads(path.read_text(encoding="utf-8"))["packet_id"] == "packet-1"
     with pytest.raises(TypeError):
         client.export_packet({"packet_id": "bad"})  # type: ignore[arg-type]
+
+
+def test_review_result_raw_response_rejects_too_many_keys() -> None:
+    raw_response = {f"k{i}": i for i in range(MAX_RAW_RESPONSE_KEYS + 1)}
+    with pytest.raises(ValueError, match="raw_response_too_many_keys"):
+        ReviewResultModel(
+            packet_id="packet-1",
+            decision="keep",
+            reviewed_at=utcnow(),
+            raw_response=raw_response,
+        )
+
+
+def test_review_result_raw_response_rejects_large_payload() -> None:
+    with pytest.raises(ValueError, match="raw_response_too_large"):
+        ReviewResultModel(
+            packet_id="packet-1",
+            decision="keep",
+            reviewed_at=utcnow(),
+            raw_response={"payload": "x" * 20000},
+        )

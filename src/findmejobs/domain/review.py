@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime
 import re
+import json
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 HTML_TAG_RE = re.compile(r"<[^>]+>")
+MAX_RAW_RESPONSE_BYTES = 16 * 1024
+MAX_RAW_RESPONSE_KEYS = 64
 
 
 class ReviewPacketModel(BaseModel):
@@ -44,3 +47,13 @@ class ReviewResultModel(BaseModel):
     draft_actions: list[str] = Field(default_factory=list)
     reviewed_at: datetime
     raw_response: dict
+
+    @field_validator("raw_response")
+    @classmethod
+    def validate_raw_response(cls, value: dict) -> dict:
+        if len(value) > MAX_RAW_RESPONSE_KEYS:
+            raise ValueError("raw_response_too_many_keys")
+        encoded = json.dumps(value, ensure_ascii=True)
+        if len(encoded.encode("utf-8")) > MAX_RAW_RESPONSE_BYTES:
+            raise ValueError("raw_response_too_large")
+        return value

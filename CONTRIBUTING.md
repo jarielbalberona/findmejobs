@@ -29,11 +29,11 @@ There are only two legitimate cases:
 1. Add a new source config for an existing adapter kind.
 2. Add a brand-new adapter kind.
 
-Do not build custom one-off hacks in random scripts. The operator interface is the CLI and the runtime config under `config/sources.d/`.
+Do not build custom one-off hacks in random scripts. The operator interface is the CLI and the runtime config in `config/sources.yaml`.
 
 ## Case 1: Add A Source Using An Existing Adapter
 
-If the site already fits one of the shipped kinds, do not write new parser code. Add a TOML config file instead.
+If the site already fits one of the shipped kinds, do not write new parser code. Add a source entry via `findmejobs sources add` into `config/sources.yaml`.
 
 Current kinds:
 
@@ -49,15 +49,10 @@ Current kinds:
 - `foundit_ph`
 - `direct_page`
 
-Start from the matching shipped template under `config/examples/sources.d/`, copy it into **`config/sources.d/`** (gitignored), then edit:
+Start from `config/examples/sources.yaml` and add one validated source object:
 
-```toml
-name = "acme-greenhouse"
-kind = "greenhouse"
-enabled = true
-company_name = "Acme"
-board_token = "acme"
-include_content = true
+```bash
+findmejobs sources add --json '{"name":"acme-greenhouse","kind":"greenhouse","enabled":true,"company_name":"Acme","board_token":"acme","include_content":true}'
 ```
 
 Run it directly:
@@ -142,7 +137,7 @@ If you skip classification wiring, source trust and reporting will be wrong. Tha
 
 ### Step 5: Add Example Config
 
-Add a matching **committed** example under `config/examples/sources.d/` (not under `config/sources.d/`, which is gitignored for operators).
+Add a matching **committed** example entry under `config/examples/sources.yaml` (not under `config/sources.yaml`, which is gitignored for operators).
 
 That example should be enough for another contributor to understand the required fields without reading the adapter implementation.
 

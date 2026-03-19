@@ -10,12 +10,11 @@ state/**
 !state/.gitkeep
 
 # Operator-local config (secrets, CV-derived prefs, real source URLs/tokens).
-# Committed templates: config/examples/app.toml, config/examples/sources.d/*.toml
+# Committed templates: config/examples/app.toml, config/examples/sources.yaml
 config/app.toml
-config/profile.toml
 config/profile.yaml
 config/ranking.yaml
-config/sources.d/*.toml
+config/sources.yaml
 
 *.db
 *.sqlite

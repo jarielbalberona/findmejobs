@@ -33,14 +33,15 @@ def test_invalid_source_config_fails_clearly(tmp_path: Path) -> None:
     assert "not-real" in str(exc.value)
 
 
-def test_missing_required_fields_are_surfaced(tmp_path: Path) -> None:
-    profile_path = tmp_path / "profile.toml"
-    profile_path.write_text('version = "v1"\nrank_model_version = "r1"\n', encoding="utf-8")
+def test_yaml_profile_loads_even_when_some_fields_are_missing(tmp_path: Path) -> None:
+    profile_path = tmp_path / "profile.yaml"
+    ranking_path = tmp_path / "ranking.yaml"
+    profile_path.write_text('{"version":"v1"}', encoding="utf-8")
+    ranking_path.write_text('{"rank_model_version":"r1","minimum_score":30.0,"stale_days":30}', encoding="utf-8")
 
-    with pytest.raises(ValidationError) as exc:
-        load_profile_config(profile_path)
-
-    assert "target_titles" in str(exc.value)
+    profile = load_profile_config(profile_path)
+    assert profile.version == "v1"
+    assert profile.target_titles == []
 
 
 def test_yaml_profile_pair_loads_correctly(tmp_path: Path) -> None:
@@ -207,3 +208,34 @@ def test_ph_board_source_configs_fail_clearly_on_invalid_values(tmp_path: Path, 
 
     with pytest.raises(ValidationError):
         load_source_configs(sources_dir)
+
+
+def test_app_config_rejects_inline_smtp_password(tmp_path: Path) -> None:
+    app_path = tmp_path / "app.toml"
+    app_path.write_text(
+        "\n".join(
+            [
+                "[database]",
+                'url = "sqlite:///./var/app.db"',
+                "",
+                "[storage]",
+                'root_dir = "./var"',
+                'raw_dir = "./var/raw"',
+                'review_outbox_dir = "./var/review/outbox"',
+                'review_inbox_dir = "./var/review/inbox"',
+                'lock_dir = "./var/locks"',
+                "",
+                "[delivery.email]",
+                "enabled = true",
+                'host = "smtp.example.test"',
+                'sender = "noreply@example.test"',
+                'recipient = "user@example.test"',
+                'password = "plaintext-not-allowed"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValidationError) as exc:
+        load_app_config(app_path)
+    assert "FINDMEJOBS_SMTP_PASSWORD" in str(exc.value)

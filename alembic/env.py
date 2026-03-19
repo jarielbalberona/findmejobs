@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import os
 from logging.config import fileConfig
+from pathlib import Path
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
+from sqlalchemy.engine.url import make_url
 
 from findmejobs.db.base import Base
 from findmejobs.db import models  # noqa: F401
@@ -17,8 +19,28 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+def _ensure_sqlite_parent_dir(database_url: str | None) -> None:
+    """Create parent dir for file SQLite URLs so fresh clones work (./var/ is gitignored)."""
+    if not database_url:
+        return
+    try:
+        url = make_url(database_url)
+    except Exception:
+        return
+    if "sqlite" not in url.drivername:
+        return
+    db_path = url.database
+    if db_path is None or db_path == ":memory:":
+        return
+    path = Path(db_path)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    path.resolve().parent.mkdir(parents=True, exist_ok=True)
+
+
 def run_migrations_offline() -> None:
     url = os.getenv("FINDMEJOBS_DATABASE_URL", config.get_main_option("sqlalchemy.url"))
+    _ensure_sqlite_parent_dir(url)
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -33,6 +55,7 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     section = config.get_section(config.config_ini_section, {})
     section["sqlalchemy.url"] = os.getenv("FINDMEJOBS_DATABASE_URL", section["sqlalchemy.url"])
+    _ensure_sqlite_parent_dir(section.get("sqlalchemy.url"))
     connectable = engine_from_config(
         section,
         prefix="sqlalchemy.",

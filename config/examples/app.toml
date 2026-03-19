@@ -29,7 +29,7 @@ enabled = false
 host = "smtp.example.com"
 port = 587
 username = ""
-password = ""
+# SMTP password must be provided via FINDMEJOBS_SMTP_PASSWORD.
 use_tls = true
 sender = "findmejobs@example.com"
 recipient = "operator@example.com"

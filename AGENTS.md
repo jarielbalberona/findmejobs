@@ -72,7 +72,7 @@ What the codebase is intended to deliver today (grouped for clarity; not a relea
 
 ### Config and runtime
 - Typed config loading (TOML and YAML)
-- Runtime paths: `config/app.toml`, `config/profile.yaml`, `config/ranking.yaml`, `config/sources.d/*.toml` (operator-local; gitignored—templates under `config/examples/`)
+- Runtime paths: `config/app.toml`, `config/profile.yaml`, `config/ranking.yaml`, `config/sources.yaml` (operator-local; gitignored—templates under `config/examples/`)
 - Typer CLI
 - Structured logging, `doctor` health checks, operational `report`ing
 - systemd service/timer examples for scheduled runs
@@ -187,7 +187,7 @@ Operators (and OpenClaw driving the CLI) add **config** with `findmejobs sources
 
 ### When an existing `kind` is enough
 
-1. Build one JSON object that matches `SourceConfig` for a supported `kind` (same fields as `config/examples/sources.d/*.toml` and `src/findmejobs/config/models.py`).
+1. Build one JSON object that matches `SourceConfig` for a supported `kind` (same fields as `config/examples/sources.yaml` and `src/findmejobs/config/models.py`).
 2. Run `findmejobs sources add --json '<object>'` (or `--json-file`).
 3. Run `findmejobs doctor`, then `findmejobs ingest --source <name>`.
 
@@ -205,9 +205,9 @@ Implementation checklist (keep changes boring and testable):
 2. **Config model** — In `src/findmejobs/config/models.py`, define a new `*SourceConfig` subclass of `SourceBaseConfig` with `kind: Literal["your_kind"]` and the fields the adapter needs (URLs, tokens, etc.). Append it to the `SourceConfig` discriminated union.
 3. **Adapter** — Add `src/findmejobs/ingestion/adapters/<your_kind>.py` implementing `SourceAdapter`: `build_url(config) -> str` and `parse(artifact, config) -> list[SourceJobRecord]` (use `parse_with_stats` when you need skip accounting). Use `validate_config_type` from `ingestion/adapters/base.py` against your config class.
 4. **Orchestrator** — In `src/findmejobs/ingestion/orchestrator.py`, import the new config and adapter classes and add a branch in `build_adapter()` that returns your adapter for that config type.
-5. **Example (optional)** — Add a commented or disabled example under `config/examples/sources.d/` for operators copying templates.
+5. **Example (optional)** — Add a commented or disabled example entry under `config/examples/sources.yaml` for operators copying templates.
 6. **Tests** — Add adapter tests with **mocked HTTP** and fixture payloads: happy path, malformed payloads, and layout drift where relevant (see [Testing rules](#testing-rules)). Tier B–style sources need stronger parser tests.
-7. **Ship the source config** — Run `findmejobs sources add --json '...'` with the new `kind`, or add TOML by hand; then `doctor` and `ingest`.
+7. **Ship the source config** — Run `findmejobs sources add --json '...'` with the new `kind`; then `doctor` and `ingest`.
 
 After this, OpenClaw chat can add **additional** sources of the same `kind` using `sources add` only—no further Python changes unless the site’s contract changes.
 
@@ -232,8 +232,8 @@ This repo should contain modules for:
 - observability
 
 ### Configuration
-- Committed templates: `config/examples/app.toml`, `config/examples/sources.d/*.toml`, and draft examples under `config/examples/`
-- Operator-local (gitignored): `config/app.toml`, `config/profile.toml`, `config/profile.yaml`, `config/ranking.yaml`, `config/sources.d/*.toml`
+- Committed templates: `config/examples/app.toml`, `config/examples/sources.yaml`, and draft examples under `config/examples/`
+- Operator-local (gitignored): `config/app.toml`, `config/profile.yaml`, `config/ranking.yaml`, `config/sources.yaml`
 - Runtime reads the **local** paths above after you copy from `config/examples/`
 
 ### State
@@ -401,9 +401,9 @@ Expected commands:
 - `findmejobs profile diff`
 - `findmejobs profile promote-draft`
 - `findmejobs ingest` (optional `--source` filter by config name or adapter kind)
-- `findmejobs sources list` / `findmejobs sources add` (validated `sources.d` TOML; `add` takes `--json` or `--json-file`)
+- `findmejobs sources list` / `findmejobs sources add` / `sources set` / `sources disable` / `sources remove` (validated `sources.yaml` writes)
 - `findmejobs rank`
-- `findmejobs ranking explain` / `findmejobs ranking set` (inspect or patch scalar `ranking.yaml` fields)
+- `findmejobs ranking explain` / `findmejobs ranking set` (inspect or patch scalar/list/weights/title-family `ranking.yaml` fields)
 - `findmejobs jobs list` (ranked job previews for the current profile)
 - `findmejobs review export` / `findmejobs review import-results` (alias: `review import`)
 - `findmejobs digest send` (and `digest resend` where applicable)
@@ -418,7 +418,7 @@ Dry-run modes should exist for destructive or external-output flows where practi
 
 ## Minimal CLI surface (target)
 
-**Intent:** Let operators (and OpenClaw driving the CLI) update **validated** config without ad hoc YAML/TOML surgery. **Shipped:** `sources list` / `sources add` (JSON-in → validated `SourceConfig` → one TOML file), plus `ranking set` (scalar `ranking.yaml`), profile bootstrap/promote. The rest below is still **target** surface—implement incrementally; every write path should stay `model_validate` → write → `doctor`-clean.
+**Intent:** Let operators (and OpenClaw driving the CLI) update **validated** config without ad hoc YAML/TOML surgery. **Shipped:** canonical YAML runtime (`profile.yaml`, `ranking.yaml`, `sources.yaml`), `config init` / `config validate` / `config show-effective`, `sources list/add/set/disable/remove`, `ranking set` (scalar/list/weights/title-family), and profile bootstrap/promote.
 
 ### Principles
 
@@ -433,8 +433,8 @@ Dry-run modes should exist for destructive or external-output flows where practi
 
 | Command | Purpose |
 |--------|---------|
-| `sources list [--json]` | **Done.** Enumerate `config/sources.d/*.toml` (fails if any file is invalid). |
-| `sources add --json '<object>'` or `--json-file <path>` | **Done.** Validate one JSON object as `SourceConfig`, write `config/sources.d/<stem>.toml` (default stem from `name`; `--output-stem`, `--force`). Rejects duplicate `name` already present in another file. |
+| `sources list [--json]` | **Done.** Enumerate validated entries in `config/sources.yaml`. |
+| `sources add --json '<object>'` or `--json-file <path>` | **Done.** Validate one JSON object as `SourceConfig`, append/replace one entry in `config/sources.yaml`. |
 | `sources set <name>` | **Target.** Patch only `SourceBaseConfig` scalars: `enabled`, `priority`, `trust_weight`, `fetch_cap`; optional `--add-blocked-title-keyword` / `--remove-blocked-title-keyword`. |
 | `sources remove <name> [--yes]` | **Target.** Delete the file, or defer and document **disable-only** if delete is too sharp for v1. |
 

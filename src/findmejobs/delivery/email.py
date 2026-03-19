@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import smtplib
+import os
 import time
 from dataclasses import dataclass
 from email.message import EmailMessage
@@ -42,8 +43,9 @@ class SMTPEmailSender:
                 with smtplib.SMTP(self.config.host, self.config.port, timeout=20) as smtp:
                     if self.config.use_tls:
                         smtp.starttls()
-                    if self.config.username and self.config.password:
-                        smtp.login(self.config.username, self.config.password)
+                    smtp_password = os.getenv("FINDMEJOBS_SMTP_PASSWORD")
+                    if self.config.username and smtp_password:
+                        smtp.login(self.config.username, smtp_password)
                     response = smtp.send_message(message)
                 provider_message_id = "sent" if not response else "queued"
                 return EmailSendResult(provider_message_id=provider_message_id, attempts=attempt)

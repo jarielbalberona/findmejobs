@@ -33,7 +33,7 @@ Built with Python 3.12, SQLite, SQLAlchemy, Pydantic, and Typer.
 
 Contributor rules and source-adapter guidance live in `AGENTS.md` and `CONTRIBUTING.md`.
 
-For the **planned** validated-config CLI surface (sources, profile/ranking beyond today’s commands, optional `app set`), see [Minimal CLI surface (target)](AGENTS.md#minimal-cli-surface-target) in `AGENTS.md`.
+OpenClaw/operator workflows are CLI-first in v1. Use `config init`, `config validate`, `config show-effective`, `profile set`, `ranking set`, and `sources` commands instead of manual editing.
 
 ## Start here
 
@@ -97,29 +97,35 @@ pip install -e ".[dev]"
 alembic upgrade head
 ```
 
+The default DB URL is `sqlite:///./var/app.db`. If you see **OperationalError: unable to open database file**, you are almost never missing the `sqlite3` library (Python ships it). The usual cause is a missing **`var/`** directory on a fresh clone (it is gitignored). Current Alembic setup creates `var/` automatically before connecting; on older installs, run `mkdir -p var` from the repo root, then retry `alembic upgrade head`. Run Alembic from the **repository root** so the relative path resolves correctly.
+
 ## Configure local runtime
 
-Runtime config is local and **gitignored** (see [.gitignore](.gitignore): `config/app.toml`, `config/profile.toml`, `config/profile.yaml`, `config/ranking.yaml`, `config/sources.d/*.toml`). Copy templates from `config/examples/` and edit your private copies.
+Runtime config is local and **gitignored** (see [.gitignore](.gitignore): `config/app.toml`, `config/profile.yaml`, `config/ranking.yaml`, `config/sources.yaml`).
 
 ```bash
-cp config/examples/app.toml config/app.toml
-mkdir -p config/sources.d
-cp config/examples/sources.d/rss.toml config/sources.d/my-feed.toml
+findmejobs config init
+findmejobs config validate
 ```
 
 Key files:
 - `config/app.toml` — runtime paths, database, HTTP, delivery
 - `config/profile.yaml` — canonical promoted profile
 - `config/ranking.yaml` — canonical promoted ranking config
-- `config/sources.d/*.toml` — enabled sources
+- `config/sources.yaml` — enabled sources
+
+Delivery secret:
+- SMTP password is env-only: set `FINDMEJOBS_SMTP_PASSWORD` when email auth is needed.
 
 Minimal source example:
 
-```toml
-name = "my-feed"
-kind = "rss"
-enabled = true
-feed_url = "https://example.com/jobs.rss"
+```yaml
+version: v1
+sources:
+  - name: my-feed
+    kind: rss
+    enabled: true
+    feed_url: https://example.com/jobs.rss
 ```
 
 Supported source kinds:
@@ -159,20 +165,30 @@ findmejobs ingest --source greenhouse
 findmejobs digest send --dry-run
 findmejobs digest resend --digest-date 2026-03-19
 findmejobs ranking explain
-findmejobs ranking set --minimum-score 40 --stale-days 45
+findmejobs ranking set --minimum-score 40 --stale-days 45 --add-blocked-company "Bad Co"
 findmejobs jobs list
 findmejobs jobs list --all-scored --limit 100
 findmejobs jobs list --json | jq '.jobs[:5]'
+findmejobs sources list --json
+findmejobs sources add --json '{"name":"my-feed","kind":"rss","feed_url":"https://example.com/jobs.rss"}'
+findmejobs config show-effective --json
 ```
 
 ## Core commands
 
 - `findmejobs doctor` — validate config, DB, and runtime paths
+- `findmejobs config init` — create starter local config files
+- `findmejobs config validate` — validate local config files
+- `findmejobs config show-effective` — show resolved effective config (`--json` for machine output)
 - `findmejobs ingest [--source <name-or-kind>]` — fetch, store raw payloads, normalize, dedupe
+- `findmejobs sources list` — show validated sources from `config/sources.yaml` (`--json` for machine-readable)
+- `findmejobs sources add` — validate one JSON object and add/replace source config in `config/sources.yaml`
+- `findmejobs sources set|disable|remove` — mutate source config safely via CLI
 - `findmejobs rank` — apply deterministic ranking
 - `findmejobs rerank` — alias for `rank`
 - `findmejobs ranking explain` — show hard-filter reason codes → config keys, score components → weights, and the effective `ranking.yaml` policy (use `--json` for machine-readable)
-- `findmejobs ranking set` — patch scalar fields in `config/ranking.yaml` (e.g. `--minimum-score`, `--stale-days`, `--require-remote` / `--no-require-remote`); lists and `title_families` still require editing the file
+- `findmejobs ranking set` — patch scalar/list/weights/title-family fields in `config/ranking.yaml`
+- `findmejobs profile set` — patch canonical profile fields/lists in `config/profile.yaml`
 - `findmejobs jobs list` — print ranked job previews (title, score, tags, matched signals, description snippet); add `--all-scored` for hard-filtered / below-threshold rows, `--json` for machine-readable output (same filters as text—combine `--json` with `--all-scored` when you want every scored row)
 - `findmejobs report` — print operational summary
 - `findmejobs review export` — write sanitized review packets
@@ -196,6 +212,7 @@ findmejobs ranking --help
 findmejobs jobs --help
 findmejobs review --help
 findmejobs digest --help
+findmejobs sources --help
 ```
 
 ## Ranking configuration
@@ -289,8 +306,11 @@ src/findmejobs/
   review/
 
 config/
-  examples/        committed templates (`app.toml`, `sources.d/*.toml`, draft YAML examples)
-  sources.d/       operator-local source definitions (gitignored except `.gitkeep`)
+  examples/        committed templates (`app.toml`, `sources.yaml`, draft YAML examples)
+  app.toml         operator-local runtime config
+  profile.yaml     canonical operator profile
+  ranking.yaml     canonical ranking config
+  sources.yaml     canonical source config list
 
 state/
   profile_bootstrap/

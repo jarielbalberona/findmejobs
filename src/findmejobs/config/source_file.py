@@ -1,37 +1,16 @@
-"""Write validated source definitions to `config/sources.d/*.toml`."""
+"""Read/write validated source definitions in canonical `config/sources.yaml`."""
 
 from __future__ import annotations
 
 import json
-import re
-import tomllib
 from pathlib import Path
 
-import tomli_w
 from pydantic import TypeAdapter, ValidationError
 
-from findmejobs.config.models import SourceConfig
+from findmejobs.config.models import SourceConfig, SourcesFileConfig
+from findmejobs.utils.yamlio import dump_yaml, load_yaml
 
 _source_adapter = TypeAdapter(SourceConfig)
-
-
-def safe_source_filename_stem(name: str) -> str:
-    """Filesystem-safe stem derived from source `name` (lowercase, no path chars)."""
-    s = name.strip().lower().replace(" ", "-")
-    s = re.sub(r"[^a-z0-9_.-]+", "-", s)
-    s = re.sub(r"-+", "-", s).strip("-")
-    return s or "source"
-
-
-def source_config_to_toml_document(config: SourceConfig) -> dict:
-    """Turn a validated config into a TOML-friendly dict (JSON mode for URLs etc.)."""
-    return config.model_dump(mode="json", exclude_none=True)
-
-
-def write_source_toml(path: Path, config: SourceConfig) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    doc = source_config_to_toml_document(config)
-    path.write_text(tomli_w.dumps(doc).rstrip() + "\n", encoding="utf-8")
 
 
 def parse_source_json_payload(raw: str) -> SourceConfig:
@@ -47,38 +26,104 @@ def parse_source_json_payload(raw: str) -> SourceConfig:
         raise ValueError(f"validation_error:{exc}") from exc
 
 
-def find_toml_path_for_source_name(sources_dir: Path, name: str) -> Path | None:
-    """Return the first `*.toml` under `sources_dir` whose top-level `name` matches."""
-    if not sources_dir.is_dir():
-        return None
-    for path in sorted(sources_dir.glob("*.toml")):
-        try:
-            with path.open("rb") as handle:
-                data = tomllib.load(handle)
-        except (OSError, tomllib.TOMLDecodeError):
-            continue
-        if isinstance(data, dict) and data.get("name") == name:
-            return path
+def load_sources_file(path: Path) -> SourcesFileConfig:
+    if not path.exists():
+        return SourcesFileConfig()
+    raw = load_yaml(path)
+    return SourcesFileConfig.model_validate(raw or {})
+
+
+def write_sources_file(path: Path, config: SourcesFileConfig) -> None:
+    dump_yaml(config.model_dump(mode="json"), path)
+
+
+def list_sources(path: Path) -> list[SourceConfig]:
+    return load_sources_file(path).sources
+
+
+def add_source(path: Path, source: SourceConfig, *, replace: bool = False) -> SourcesFileConfig:
+    config = load_sources_file(path)
+    idx = _find_source_index(config.sources, source.name)
+    if idx is not None and not replace:
+        raise ValueError(f"source_already_exists:{source.name}")
+    if idx is None:
+        config.sources.append(source)
+    else:
+        config.sources[idx] = source
+    write_sources_file(path, config)
+    return config
+
+
+def set_source_fields(
+    path: Path,
+    *,
+    name: str,
+    enabled: bool | None = None,
+    priority: int | None = None,
+    trust_weight: float | None = None,
+    fetch_cap: int | None = None,
+    add_blocked_title_keywords: list[str] | None = None,
+    remove_blocked_title_keywords: list[str] | None = None,
+) -> SourceConfig:
+    config = load_sources_file(path)
+    idx = _find_source_index(config.sources, name)
+    if idx is None:
+        raise ValueError(f"unknown_source:{name}")
+    source = config.sources[idx]
+    payload = source.model_dump(mode="python")
+    if enabled is not None:
+        payload["enabled"] = enabled
+    if priority is not None:
+        payload["priority"] = priority
+    if trust_weight is not None:
+        payload["trust_weight"] = trust_weight
+    if fetch_cap is not None:
+        payload["fetch_cap"] = fetch_cap
+    blocked = list(payload.get("blocked_title_keywords") or [])
+    if add_blocked_title_keywords:
+        blocked.extend(add_blocked_title_keywords)
+    if remove_blocked_title_keywords:
+        remove = {item.casefold() for item in remove_blocked_title_keywords}
+        blocked = [item for item in blocked if item.casefold() not in remove]
+    payload["blocked_title_keywords"] = _dedupe(blocked)
+    updated = _source_adapter.validate_python(payload)
+    config.sources[idx] = updated
+    write_sources_file(path, config)
+    return updated
+
+
+def disable_source(path: Path, *, name: str) -> SourceConfig:
+    return set_source_fields(path, name=name, enabled=False)
+
+
+def remove_source(path: Path, *, name: str) -> SourcesFileConfig:
+    config = load_sources_file(path)
+    idx = _find_source_index(config.sources, name)
+    if idx is None:
+        raise ValueError(f"unknown_source:{name}")
+    config.sources.pop(idx)
+    write_sources_file(path, config)
+    return config
+
+
+def _find_source_index(sources: list[SourceConfig], name: str) -> int | None:
+    wanted = name.casefold()
+    for idx, source in enumerate(sources):
+        if source.name.casefold() == wanted:
+            return idx
     return None
 
 
-def resolve_output_path(
-    sources_dir: Path,
-    config: SourceConfig,
-    *,
-    output_stem: str | None = None,
-) -> Path:
-    base = (output_stem or safe_source_filename_stem(config.name)).strip()
-    if not base or base in {".", ".."} or "/" in base or "\\" in base:
-        raise ValueError("invalid_output_stem")
-    return sources_dir / f"{base}.toml"
-
-
-def iter_validated_source_files(sources_dir: Path):
-    """Yield `(path, config)` for each `*.toml`, validating with `SourceConfig`."""
-    if not sources_dir.is_dir():
-        return
-    for path in sorted(sources_dir.glob("*.toml")):
-        with path.open("rb") as handle:
-            raw = tomllib.load(handle)
-        yield path, _source_adapter.validate_python(raw)
+def _dedupe(values: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in values:
+        cleaned = str(item).strip()
+        if not cleaned:
+            continue
+        key = cleaned.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(cleaned)
+    return out

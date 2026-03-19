@@ -51,7 +51,7 @@ def runtime_paths(tmp_path: Path) -> dict[str, Path]:
     return {
         "base": base,
         "etc": base / "etc",
-        "sources": base / "etc" / "sources.d",
+        "sources": base / "etc" / "sources.yaml",
         "var": base / "var",
         "raw": base / "var" / "raw",
         "outbox": base / "var" / "review" / "outbox",
@@ -71,7 +71,6 @@ def write_runtime_config(
 ) -> tuple[Path, Path, Path]:
     runtime_paths["base"].mkdir(parents=True, exist_ok=True)
     runtime_paths["etc"].mkdir(parents=True, exist_ok=True)
-    runtime_paths["sources"].mkdir(parents=True, exist_ok=True)
     runtime_paths["var"].mkdir(parents=True, exist_ok=True)
     runtime_paths["raw"].mkdir(parents=True, exist_ok=True)
     runtime_paths["outbox"].mkdir(parents=True, exist_ok=True)
@@ -80,8 +79,9 @@ def write_runtime_config(
     runtime_paths["db"].parent.mkdir(parents=True, exist_ok=True)
 
     app_path = runtime_paths["etc"] / "app.toml"
-    profile_path = runtime_paths["etc"] / "profile.toml"
-    sources_dir = runtime_paths["sources"]
+    profile_path = runtime_paths["etc"] / "profile.yaml"
+    ranking_path = runtime_paths["etc"] / "ranking.yaml"
+    sources_path = runtime_paths["sources"]
     app_path.write_text(
         "\n".join(
             [
@@ -122,57 +122,69 @@ def write_runtime_config(
     profile_path.write_text(
         "\n".join(
             [
-                'version = "test-profile"',
-                'rank_model_version = "test-rank-model"',
-                'target_titles = ["Backend Engineer", "Python Engineer"]',
-                'required_skills = ["python", "sql"]',
-                'preferred_skills = ["aws", "fastapi"]',
-                'preferred_locations = ["remote", "philippines"]',
-                'allowed_countries = ["PH", "US"]',
-                "",
-                "[ranking]",
-                "stale_days = 30",
-                "minimum_score = 30.0",
-                "minimum_salary = 90000",
-                'blocked_companies = ["Reject Co"]',
-                'blocked_title_keywords = ["intern"]',
-                "require_remote = true",
-                "",
-                "[ranking.weights]",
-                "title_alignment = 30.0",
-                "must_have_skills = 35.0",
-                "preferred_skills = 10.0",
-                "location_fit = 10.0",
-                "remote_fit = 10.0",
-                "recency = 5.0",
+                "version: test-profile",
+                "target_titles:",
+                "  - Backend Engineer",
+                "  - Python Engineer",
+                "required_skills:",
+                "  - python",
+                "  - sql",
+                "preferred_skills:",
+                "  - aws",
+                "  - fastapi",
+                "preferred_locations:",
+                "  - remote",
+                "  - philippines",
+                "allowed_countries:",
+                "  - PH",
+                "  - US",
             ]
         ),
         encoding="utf-8",
     )
-    (sources_dir / "rss.toml").write_text(
+    ranking_path.write_text(
         "\n".join(
             [
-                'name = "rss-source"',
-                'kind = "rss"',
-                f'enabled = {"true" if rss_enabled else "false"}',
-                f'feed_url = "{rss_url}"',
+                "rank_model_version: test-rank-model",
+                "stale_days: 30",
+                "minimum_score: 30.0",
+                "minimum_salary: 90000",
+                "blocked_companies:",
+                "  - Reject Co",
+                "blocked_title_keywords:",
+                "  - intern",
+                "require_remote: true",
+                "weights:",
+                "  title_alignment: 30.0",
+                "  must_have_skills: 35.0",
+                "  preferred_skills: 10.0",
+                "  location_fit: 10.0",
+                "  remote_fit: 10.0",
+                "  recency: 5.0",
             ]
         ),
         encoding="utf-8",
     )
-    (sources_dir / "greenhouse.toml").write_text(
+    sources_path.parent.mkdir(parents=True, exist_ok=True)
+    sources_path.write_text(
         "\n".join(
             [
-                'name = "acme"',
-                'kind = "greenhouse"',
-                f'enabled = {"true" if greenhouse_enabled else "false"}',
-                f'board_token = "{greenhouse_token}"',
-                "include_content = true",
+                "version: v1",
+                "sources:",
+                "  - name: rss-source",
+                "    kind: rss",
+                f"    enabled: {'true' if rss_enabled else 'false'}",
+                f"    feed_url: {rss_url}",
+                "  - name: acme",
+                "    kind: greenhouse",
+                f"    enabled: {'true' if greenhouse_enabled else 'false'}",
+                f"    board_token: {greenhouse_token}",
+                "    include_content: true",
             ]
         ),
         encoding="utf-8",
     )
-    return app_path, profile_path, sources_dir
+    return app_path, profile_path, sources_path
 
 
 @pytest.fixture()

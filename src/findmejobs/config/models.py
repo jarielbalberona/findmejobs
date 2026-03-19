@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 
 class StorageConfig(BaseModel):
@@ -37,6 +37,13 @@ class EmailDeliveryConfig(BaseModel):
     use_tls: bool = True
     sender: str | None = None
     recipient: str | None = None
+
+    @model_validator(mode="after")
+    def reject_inline_password(self) -> "EmailDeliveryConfig":
+        # Keep SMTP passwords out of config files/shell history; use env var instead.
+        if self.password not in (None, ""):
+            raise ValueError("delivery.email.password is not supported; use FINDMEJOBS_SMTP_PASSWORD")
+        return self
 
 
 class DeliveryConfig(BaseModel):
@@ -152,6 +159,13 @@ SourceConfig = Annotated[
     | DirectPageSourceConfig,
     Field(discriminator="kind"),
 ]
+
+
+class SourcesFileConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: str = "v1"
+    sources: list[SourceConfig] = Field(default_factory=list)
 
 
 class RankingWeights(BaseModel):

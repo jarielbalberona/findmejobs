@@ -8,7 +8,7 @@ User=findmejobs
 Group=findmejobs
 WorkingDirectory=/opt/findmejobs
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/opt/findmejobs/.venv/bin/findmejobs rank --app-config-path /etc/findmejobs/app.toml --profile-path /etc/findmejobs/profile.toml --sources-dir /etc/findmejobs/sources.d
+ExecStart=/opt/findmejobs/.venv/bin/findmejobs rank --app-config-path /etc/findmejobs/app.toml --profile-path /etc/findmejobs/profile.yaml --sources-path /etc/findmejobs/sources.yaml
 
 [Install]
 WantedBy=multi-user.target

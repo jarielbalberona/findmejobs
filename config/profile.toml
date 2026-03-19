@@ -1,0 +1,23 @@
+version = "default-v1"
+rank_model_version = "slice1-default"
+target_titles = ["Python Engineer", "Backend Engineer", "Software Engineer"]
+required_skills = ["python", "sql"]
+preferred_skills = ["aws", "docker", "fastapi"]
+preferred_locations = ["remote", "philippines"]
+allowed_countries = ["PH", "US"]
+
+[ranking]
+stale_days = 30
+minimum_score = 45.0
+minimum_salary = 90000
+blocked_companies = ["Bad Example LLC"]
+blocked_title_keywords = ["intern", "unpaid"]
+require_remote = true
+
+[ranking.weights]
+title_alignment = 30.0
+must_have_skills = 35.0
+preferred_skills = 10.0
+location_fit = 10.0
+remote_fit = 10.0
+recency = 5.0

@@ -40,6 +40,18 @@ class FakeHttpClient:
         )
 
 
+def _install_ingest_http_fixtures(fixtures_dir: Path, monkeypatch) -> None:
+    FakeHttpClient.fixtures = {
+        "https://example.test/jobs.rss": (fixtures_dir / "rss_feed.xml").read_bytes(),
+        "https://boards-api.greenhouse.io/v1/boards/acme/jobs?content=true": (fixtures_dir / "greenhouse_jobs.json").read_bytes(),
+    }
+    FakeHttpClient.content_types = {
+        "https://example.test/jobs.rss": "application/rss+xml",
+        "https://boards-api.greenhouse.io/v1/boards/acme/jobs?content=true": "application/json",
+    }
+    monkeypatch.setattr("findmejobs.ingestion.orchestrator.httpx.Client", FakeHttpClient)
+
+
 def _seed_cluster(
     session,
     *,
@@ -226,8 +238,9 @@ def test_ingest_command_errors_when_all_matching_sources_disabled(
         ],
     )
     assert result.exit_code == 1
-    assert "No enabled sources to run" in result.stderr
-    assert "enabled = false" in result.stderr
+    out = result.stdout + result.stderr
+    assert "No enabled sources to run" in out
+    assert "enabled = false" in out
 
 
 def test_ingest_command_source_filter_errors_when_nothing_matches(
@@ -250,7 +263,8 @@ def test_ingest_command_source_filter_errors_when_nothing_matches(
         ],
     )
     assert result.exit_code == 1
-    assert "No source configs matched" in result.stderr
+    out = result.stdout + result.stderr
+    assert "No source configs matched" in out
 
 
 def test_ingest_command_fails_when_any_enabled_source_fails(
@@ -851,8 +865,8 @@ def test_doctor_command_reports_stale_pipeline_and_repeated_source_failures(
     assert "source_repeated_failures:rss-source" in result.stdout
 
 
-def test_sources_add_writes_valid_toml(tmp_path: Path, cli_runner) -> None:
-    sources_dir = tmp_path / "sources.d"
+def test_sources_add_writes_valid_yaml(tmp_path: Path, cli_runner) -> None:
+    sources_path = tmp_path / "sources.yaml"
     payload = json.dumps(
         {
             "name": "test-rss",
@@ -863,14 +877,13 @@ def test_sources_add_writes_valid_toml(tmp_path: Path, cli_runner) -> None:
     )
     result = cli_runner.invoke(
         app,
-        ["sources", "add", "--sources-dir", str(sources_dir), "--json", payload],
+        ["sources", "add", "--sources-path", str(sources_path), "--json", payload],
     )
     assert result.exit_code == 0
     out = result.stdout + result.stderr
     assert "wrote" in out
-    out_file = sources_dir / "test-rss.toml"
-    assert out_file.exists()
-    configs = load_source_configs(sources_dir)
+    assert sources_path.exists()
+    configs = load_source_configs(sources_path)
     assert len(configs) == 1
     assert configs[0].name == "test-rss"
     assert configs[0].kind == "rss"
@@ -878,40 +891,401 @@ def test_sources_add_writes_valid_toml(tmp_path: Path, cli_runner) -> None:
 
 
 def test_sources_add_rejects_duplicate_name(tmp_path: Path, cli_runner) -> None:
-    sources_dir = tmp_path / "sources.d"
-    sources_dir.mkdir()
-    (sources_dir / "a.toml").write_text(
-        'name = "dup"\nkind = "rss"\nfeed_url = "https://a.com/jobs.xml"\n',
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(
+        "\n".join(
+            [
+                "version: v1",
+                "sources:",
+                "  - name: dup",
+                "    kind: rss",
+                "    feed_url: https://a.com/jobs.xml",
+            ]
+        ),
         encoding="utf-8",
     )
     payload = json.dumps({"name": "dup", "kind": "rss", "feed_url": "https://b.com/jobs.xml"})
     result = cli_runner.invoke(
         app,
-        ["sources", "add", "--sources-dir", str(sources_dir), "--json", payload],
+        ["sources", "add", "--sources-path", str(sources_path), "--json", payload],
     )
     assert result.exit_code == 1
     out = result.stdout + result.stderr
-    assert "already defined" in out
+    assert "source_already_exists" in out
 
 
 def test_sources_list_json(tmp_path: Path, cli_runner) -> None:
-    sources_dir = tmp_path / "sources.d"
-    sources_dir.mkdir()
-    (sources_dir / "x.toml").write_text(
-        'name = "x"\nkind = "rss"\nenabled = true\nfeed_url = "https://x.com/jobs.xml"\n',
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(
+        "\n".join(
+            [
+                "version: v1",
+                "sources:",
+                "  - name: x",
+                "    kind: rss",
+                "    enabled: true",
+                "    feed_url: https://x.com/jobs.xml",
+            ]
+        ),
         encoding="utf-8",
     )
-    result = cli_runner.invoke(app, ["sources", "list", "--sources-dir", str(sources_dir), "--json"])
+    result = cli_runner.invoke(app, ["sources", "list", "--sources-path", str(sources_path), "--json"])
     assert result.exit_code == 0
     data = json.loads(result.stdout)
-    assert len(data) == 1
-    assert data[0]["name"] == "x"
-    assert data[0]["kind"] == "rss"
-    assert "path" in data[0]
+    assert len(data["sources"]) == 1
+    assert data["sources"][0]["name"] == "x"
+    assert data["sources"][0]["kind"] == "rss"
 
 
 def test_sources_add_requires_json_xor_file(tmp_path: Path, cli_runner) -> None:
-    sources_dir = tmp_path / "sources.d"
-    result = cli_runner.invoke(app, ["sources", "add", "--sources-dir", str(sources_dir)])
+    sources_path = tmp_path / "sources.yaml"
+    result = cli_runner.invoke(app, ["sources", "add", "--sources-path", str(sources_path)])
     assert result.exit_code == 1
     assert "exactly one" in (result.stdout + result.stderr).lower()
+
+
+def test_config_init_validate_and_show_effective_json(tmp_path: Path, cli_runner) -> None:
+    config_root = tmp_path / "config"
+    examples = config_root / "examples"
+    examples.mkdir(parents=True, exist_ok=True)
+    app_template = examples / "app.toml"
+    db_path = tmp_path / "var" / "app.db"
+    app_template.write_text(
+        "\n".join(
+            [
+                "[database]",
+                f'url = "sqlite:///{db_path}"',
+                "",
+                "[storage]",
+                f'root_dir = "{tmp_path / "var"}"',
+                f'raw_dir = "{tmp_path / "var" / "raw"}"',
+                f'review_outbox_dir = "{tmp_path / "var" / "review" / "outbox"}"',
+                f'review_inbox_dir = "{tmp_path / "var" / "review" / "inbox"}"',
+                f'lock_dir = "{tmp_path / "var" / "locks"}"',
+                "",
+                "[delivery]",
+                'channel = "email"',
+                "daily_hour = 8",
+                "digest_max_items = 10",
+                "",
+                "[delivery.email]",
+                "enabled = false",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (examples / "profile.draft.yaml").write_text("version: bootstrap-v1\n", encoding="utf-8")
+    (examples / "ranking.draft.yaml").write_text("rank_model_version: bootstrap-v1\n", encoding="utf-8")
+
+    init_result = cli_runner.invoke(app, ["config", "init", "--config-root", str(config_root), "--json"])
+    assert init_result.exit_code == 0
+    init_payload = json.loads(init_result.stdout)
+    assert init_payload["command"] == "config_init"
+    assert init_payload["status"] == "ok"
+    assert (config_root / "sources.yaml").exists()
+
+    validate_result = cli_runner.invoke(
+        app,
+        [
+            "config",
+            "validate",
+            "--app-config-path",
+            str(config_root / "app.toml"),
+            "--profile-path",
+            str(config_root / "profile.yaml"),
+            "--sources-path",
+            str(config_root / "sources.yaml"),
+            "--json",
+        ],
+    )
+    assert validate_result.exit_code == 0
+    validate_payload = json.loads(validate_result.stdout)
+    assert validate_payload["command"] == "config_validate"
+    assert validate_payload["status"] == "ok"
+    assert validate_payload["summary"]["source_count"] == 0
+
+    effective_result = cli_runner.invoke(
+        app,
+        [
+            "config",
+            "show-effective",
+            "--app-config-path",
+            str(config_root / "app.toml"),
+            "--profile-path",
+            str(config_root / "profile.yaml"),
+            "--sources-path",
+            str(config_root / "sources.yaml"),
+            "--json",
+        ],
+    )
+    assert effective_result.exit_code == 0
+    effective_payload = json.loads(effective_result.stdout)
+    assert effective_payload["command"] == "config_show_effective"
+    assert effective_payload["status"] == "ok"
+    assert effective_payload["sources"] == []
+
+
+def test_sources_set_disable_remove_json(tmp_path: Path, cli_runner) -> None:
+    sources_path = tmp_path / "sources.yaml"
+    sources_path.write_text(
+        "\n".join(
+            [
+                "version: v1",
+                "sources:",
+                "  - name: x",
+                "    kind: rss",
+                "    enabled: true",
+                "    feed_url: https://x.com/jobs.xml",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    set_result = cli_runner.invoke(
+        app,
+        [
+            "sources",
+            "set",
+            "x",
+            "--sources-path",
+            str(sources_path),
+            "--priority",
+            "4",
+            "--trust-weight",
+            "0.8",
+            "--json",
+        ],
+    )
+    assert set_result.exit_code == 0
+    set_payload = json.loads(set_result.stdout)
+    assert set_payload["command"] == "sources_set"
+    assert set_payload["source"]["priority"] == 4
+    assert set_payload["source"]["trust_weight"] == 0.8
+
+    disable_result = cli_runner.invoke(
+        app,
+        ["sources", "disable", "x", "--sources-path", str(sources_path), "--json"],
+    )
+    assert disable_result.exit_code == 0
+    disable_payload = json.loads(disable_result.stdout)
+    assert disable_payload["command"] == "sources_disable"
+    assert disable_payload["source"]["enabled"] is False
+
+    remove_result = cli_runner.invoke(
+        app,
+        ["sources", "remove", "x", "--sources-path", str(sources_path), "--yes", "--json"],
+    )
+    assert remove_result.exit_code == 0
+    remove_payload = json.loads(remove_result.stdout)
+    assert remove_payload["command"] == "sources_remove"
+    assert remove_payload["removed"] == "x"
+    assert load_source_configs(sources_path) == []
+
+
+def test_profile_set_json_updates_yaml(cli_runner, runtime_config_files: tuple[Path, Path, Path]) -> None:
+    _app_path, profile_path, _sources_path = runtime_config_files
+    result = cli_runner.invoke(
+        app,
+        [
+            "profile",
+            "set",
+            "--profile-path",
+            str(profile_path),
+            "--add-target-title",
+            "Platform Engineer",
+            "--remove-target-title",
+            "Backend Engineer",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["command"] == "profile_set"
+    assert payload["status"] == "ok"
+    updated = load_yaml(profile_path)
+    assert "Platform Engineer" in updated["target_titles"]
+    assert "Backend Engineer" not in updated["target_titles"]
+
+
+def test_critical_commands_emit_parseable_json(
+    cli_runner,
+    fixtures_dir: Path,
+    migrated_runtime_config_files: tuple[Path, Path, Path],
+    monkeypatch,
+) -> None:
+    app_path, profile_path, sources_path = migrated_runtime_config_files
+    _install_ingest_http_fixtures(fixtures_dir, monkeypatch)
+
+    ingest_result = cli_runner.invoke(
+        app,
+        [
+            "ingest",
+            "--app-config-path",
+            str(app_path),
+            "--profile-path",
+            str(profile_path),
+            "--sources-path",
+            str(sources_path),
+            "--json",
+        ],
+    )
+    assert ingest_result.exit_code == 0
+    ingest_payload = json.loads(ingest_result.stdout)
+    assert ingest_payload["command"] == "ingest"
+    assert ingest_payload["status"] == "ok"
+
+    doctor_result = cli_runner.invoke(
+        app,
+        [
+            "doctor",
+            "--app-config-path",
+            str(app_path),
+            "--profile-path",
+            str(profile_path),
+            "--sources-path",
+            str(sources_path),
+            "--json",
+        ],
+    )
+    assert doctor_result.exit_code == 0
+    doctor_payload = json.loads(doctor_result.stdout)
+    assert doctor_payload["command"] == "doctor"
+    assert doctor_payload["status"] == "ok"
+
+    rank_result = cli_runner.invoke(
+        app,
+        [
+            "rank",
+            "--app-config-path",
+            str(app_path),
+            "--profile-path",
+            str(profile_path),
+            "--sources-path",
+            str(sources_path),
+            "--json",
+        ],
+    )
+    assert rank_result.exit_code == 0
+    rank_payload = json.loads(rank_result.stdout)
+    assert rank_payload["command"] == "rank"
+    assert rank_payload["status"] == "ok"
+
+    export_result = cli_runner.invoke(
+        app,
+        [
+            "review",
+            "export",
+            "--app-config-path",
+            str(app_path),
+            "--profile-path",
+            str(profile_path),
+            "--sources-path",
+            str(sources_path),
+            "--json",
+        ],
+    )
+    assert export_result.exit_code == 0
+    export_payload = json.loads(export_result.stdout)
+    assert export_payload["command"] == "review_export"
+    assert export_payload["status"] == "ok"
+
+    import_result = cli_runner.invoke(
+        app,
+        [
+            "review",
+            "import",
+            "--app-config-path",
+            str(app_path),
+            "--profile-path",
+            str(profile_path),
+            "--sources-path",
+            str(sources_path),
+            "--json",
+        ],
+    )
+    assert import_result.exit_code == 0
+    import_payload = json.loads(import_result.stdout)
+    assert import_payload["command"] == "review_import"
+    assert import_payload["status"] == "ok"
+
+    validate_result = cli_runner.invoke(
+        app,
+        [
+            "config",
+            "validate",
+            "--app-config-path",
+            str(app_path),
+            "--profile-path",
+            str(profile_path),
+            "--sources-path",
+            str(sources_path),
+            "--json",
+        ],
+    )
+    assert validate_result.exit_code == 0
+    validate_payload = json.loads(validate_result.stdout)
+    assert validate_payload["command"] == "config_validate"
+    assert validate_payload["status"] == "ok"
+
+    show_effective_result = cli_runner.invoke(
+        app,
+        [
+            "config",
+            "show-effective",
+            "--app-config-path",
+            str(app_path),
+            "--profile-path",
+            str(profile_path),
+            "--sources-path",
+            str(sources_path),
+            "--json",
+        ],
+    )
+    assert show_effective_result.exit_code == 0
+    show_effective_payload = json.loads(show_effective_result.stdout)
+    assert show_effective_payload["command"] == "config_show_effective"
+    assert show_effective_payload["status"] == "ok"
+
+    digest_send_result = cli_runner.invoke(
+        app,
+        [
+            "digest",
+            "send",
+            "--app-config-path",
+            str(app_path),
+            "--profile-path",
+            str(profile_path),
+            "--sources-path",
+            str(sources_path),
+            "--digest-date",
+            "2026-03-19",
+            "--dry-run",
+            "--json",
+        ],
+    )
+    assert digest_send_result.exit_code == 0
+    digest_send_payload = json.loads(digest_send_result.stdout)
+    assert digest_send_payload["command"] == "digest_send"
+    assert digest_send_payload["status"] == "ok"
+
+    digest_resend_result = cli_runner.invoke(
+        app,
+        [
+            "digest",
+            "resend",
+            "--app-config-path",
+            str(app_path),
+            "--profile-path",
+            str(profile_path),
+            "--sources-path",
+            str(sources_path),
+            "--digest-date",
+            "2026-03-19",
+            "--dry-run",
+            "--json",
+        ],
+    )
+    assert digest_resend_result.exit_code == 0
+    digest_resend_payload = json.loads(digest_resend_result.stdout)
+    assert digest_resend_payload["command"] == "digest_resend"
+    assert digest_resend_payload["status"] == "ok"

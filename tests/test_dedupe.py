@@ -109,7 +109,7 @@ def test_exact_canonical_url_duplicates_collapse(session_factory) -> None:
         assert cluster_a.id == cluster_b.id
 
 
-def test_source_job_key_duplicates_collapse(session_factory) -> None:
+def test_source_job_key_does_not_merge_across_sources(session_factory) -> None:
     now = utcnow()
     with session_factory() as session:
         job_a = _make_normalized_job(session, source_id="a", source_job_key="shared", source_url="https://a.test/1", canonical_url=None, company="Example", title="Backend Engineer", location="Remote", now=now)
@@ -117,14 +117,14 @@ def test_source_job_key_duplicates_collapse(session_factory) -> None:
         cluster_a = assign_job_cluster(session, job_a, new_id)
         cluster_b = assign_job_cluster(session, job_b, new_id)
         session.commit()
-        assert cluster_a.id == cluster_b.id
+        assert cluster_a.id != cluster_b.id
 
 
 def test_normalized_company_title_location_duplicates_are_detected(session_factory) -> None:
     now = utcnow()
     with session_factory() as session:
-        job_a = _make_normalized_job(session, source_id="a", source_job_key="1", source_url="https://a.test/1", canonical_url=None, company="Example", title="Backend Engineer", location="Remote Philippines", now=now)
-        job_b = _make_normalized_job(session, source_id="b", source_job_key="2", source_url="https://b.test/2", canonical_url=None, company="Example", title="Backend Engineer", location="Remote Philippines", now=now)
+        job_a = _make_normalized_job(session, source_id="a", source_job_key="1", source_url="https://a.test/1", canonical_url=None, company="Example Inc.", title="Backend Engineer", location="Remote Philippines", now=now)
+        job_b = _make_normalized_job(session, source_id="b", source_job_key="2", source_url="https://b.test/2", canonical_url=None, company="example", title=" backend engineer ", location=" remote philippines ", now=now)
         cluster_a = assign_job_cluster(session, job_a, new_id)
         cluster_b = assign_job_cluster(session, job_b, new_id)
         session.commit()

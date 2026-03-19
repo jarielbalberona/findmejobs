@@ -57,6 +57,7 @@ def test_end_to_end_slice1_flow_with_visible_failure(
     with session_factory() as session:
         counts = run_ingest(session, app_config, sources, new_id, fetcher=fake_fetcher)
         assert counts["sources"] == 2
+        assert counts["failed_sources"] == 1
         assert session.scalar(select(func.count()).select_from(JobCluster)) == 2
         statuses = set(session.scalars(select(SourceFetchRun.status)))
         assert {"success", "failed"} <= statuses
@@ -96,6 +97,8 @@ def test_end_to_end_slice1_flow_with_visible_failure(
     with session_factory() as session:
         exported = export_review_packets(session, app_config, profile, new_id)
         assert exported == 1
+        exported = export_review_packets(session, app_config, profile, new_id)
+        assert exported == 0
         assert session.scalar(select(func.count()).select_from(JobScore)) >= 1
         assert session.scalar(select(func.count()).select_from(ReviewPacket)) == 1
         assert captured

@@ -30,11 +30,13 @@ def run_ingest(
     source_configs: list[SourceConfig],
     id_factory,
     *,
-    client_factory=httpx.Client,
-    fetcher=fetch_to_artifact,
+    client_factory=None,
+    fetcher=None,
     adapter_builder=None,
 ) -> dict[str, int]:
-    counts = {"sources": 0, "records": 0, "normalized": 0}
+    counts = {"sources": 0, "records": 0, "normalized": 0, "successful_sources": 0, "failed_sources": 0}
+    client_factory = client_factory or httpx.Client
+    fetcher = fetcher or fetch_to_artifact
     adapter_builder = adapter_builder or build_adapter
     with client_factory(
         timeout=app_config.http.timeout_seconds,
@@ -74,6 +76,7 @@ def run_ingest(
                     http_status=artifact.status_code,
                     item_count=len(records),
                 )
+                counts["successful_sources"] += 1
                 session.commit()
             except Exception as exc:
                 session.rollback()
@@ -90,6 +93,7 @@ def run_ingest(
                 )
                 session.add(fetch_run)
                 session.commit()
+                counts["failed_sources"] += 1
                 LOGGER.exception("ingest source failed", extra={"payload": {"source": source.name}})
     return counts
 

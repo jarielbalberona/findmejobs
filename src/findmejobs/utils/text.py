@@ -30,6 +30,7 @@ def html_to_text(value: str | None) -> str:
 def normalize_company_name(value: str) -> str:
     lowered = collapse_whitespace(value).casefold()
     stripped = LEGAL_SUFFIX_RE.sub("", lowered)
+    stripped = stripped.strip(" ,.-")
     return collapse_whitespace(stripped)
 
 

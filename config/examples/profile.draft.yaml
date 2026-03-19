@@ -1,0 +1,19 @@
+version: bootstrap-v1
+full_name: Jane Doe
+email: jane@example.com
+location_text: Manila, Philippines
+target_titles:
+  - Backend Engineer
+  - Platform Engineer
+required_skills:
+  - Python
+  - SQL
+preferred_skills:
+  - FastAPI
+  - AWS
+preferred_locations:
+  - Remote
+  - Philippines
+allowed_countries:
+  - PH
+  - SG

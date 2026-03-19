@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from findmejobs.db.models import JobCluster, JobClusterMember, NormalizedJob, SourceJob
+from findmejobs.utils.text import normalize_company_name, normalize_location, normalize_title
 
 
 @dataclass(slots=True)
@@ -54,6 +55,7 @@ def _cluster_by_source_job_key(session: Session, job: NormalizedJob) -> JobClust
         .join(NormalizedJob, NormalizedJob.id == JobClusterMember.normalized_job_id)
         .join(SourceJob, SourceJob.id == NormalizedJob.source_job_id)
         .where(NormalizedJob.id != job.id)
+        .where(SourceJob.source_id == current_source_job.source_id)
         .where(SourceJob.source_job_key == current_source_job.source_job_key)
         .limit(1)
     )
@@ -61,14 +63,25 @@ def _cluster_by_source_job_key(session: Session, job: NormalizedJob) -> JobClust
 
 
 def _cluster_by_exact_identity(session: Session, job: NormalizedJob) -> JobCluster | None:
+    normalized_company = normalize_company_name(job.company_name)
+    normalized_title = normalize_title(job.title)
+    normalized_location = normalize_location(job.location_text)
     stmt = (
-        select(JobCluster)
+        select(JobCluster, NormalizedJob)
         .join(JobClusterMember, JobClusterMember.cluster_id == JobCluster.id)
         .join(NormalizedJob, NormalizedJob.id == JobClusterMember.normalized_job_id)
         .where(NormalizedJob.id != job.id)
-        .where(NormalizedJob.company_name == job.company_name)
-        .where(NormalizedJob.title == job.title)
-        .where(NormalizedJob.location_text == job.location_text)
-        .limit(1)
     )
-    return session.scalar(stmt)
+    if job.location_type != "unknown":
+        stmt = stmt.where(NormalizedJob.location_type == job.location_type)
+    if job.country_code:
+        stmt = stmt.where((NormalizedJob.country_code == job.country_code) | (NormalizedJob.country_code.is_(None)))
+    for cluster, candidate in session.execute(stmt):
+        if normalize_company_name(candidate.company_name) != normalized_company:
+            continue
+        if normalize_title(candidate.title) != normalized_title:
+            continue
+        if normalize_location(candidate.location_text) != normalized_location:
+            continue
+        return cluster
+    return None

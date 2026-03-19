@@ -10,6 +10,7 @@ from findmejobs.utils.time import utcnow
 
 
 def assign_job_cluster(session: Session, job: NormalizedJob, id_factory) -> JobCluster:
+    session.flush()
     existing = session.scalar(
         select(JobCluster)
         .join(JobClusterMember, JobClusterMember.cluster_id == JobCluster.id)
@@ -40,6 +41,7 @@ def assign_job_cluster(session: Session, job: NormalizedJob, id_factory) -> JobC
                 is_representative=True,
             )
         )
+        session.flush()
         return cluster
 
     cluster = match.cluster
@@ -55,6 +57,7 @@ def assign_job_cluster(session: Session, job: NormalizedJob, id_factory) -> JobC
         )
     )
     cluster.representative_job_id = choose_representative_job(session, cluster, job)
+    session.flush()
     return cluster
 
 

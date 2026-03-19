@@ -41,3 +41,21 @@ def test_missing_required_fields_are_surfaced(tmp_path: Path) -> None:
         load_profile_config(profile_path)
 
     assert "target_titles" in str(exc.value)
+
+
+def test_yaml_profile_pair_loads_correctly(tmp_path: Path) -> None:
+    profile_path = tmp_path / "profile.yaml"
+    ranking_path = tmp_path / "ranking.yaml"
+    profile_path.write_text(
+        '{"version":"bootstrap-v1","full_name":"Jane Doe","target_titles":["Backend Engineer"],"required_skills":["Python"],"preferred_locations":["Remote"],"allowed_countries":["PH"]}',
+        encoding="utf-8",
+    )
+    ranking_path.write_text(
+        '{"rank_model_version":"bootstrap-v1","stale_days":30,"minimum_score":45.0,"require_remote":true,"weights":{"title_alignment":30.0,"must_have_skills":35.0,"preferred_skills":10.0,"location_fit":10.0,"remote_fit":10.0,"recency":5.0}}',
+        encoding="utf-8",
+    )
+
+    profile = load_profile_config(profile_path)
+
+    assert profile.target_titles == ["Backend Engineer"]
+    assert profile.ranking.require_remote is True

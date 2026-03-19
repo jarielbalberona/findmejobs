@@ -1,0 +1,36 @@
+{
+  "basics": {
+    "name": "Jane Doe",
+    "label": "Backend Engineer",
+    "email": "jane@example.com",
+    "summary": "Backend engineer with Python and SQL experience.",
+    "location": {
+      "city": "Manila",
+      "countryCode": "PH"
+    },
+    "profiles": [
+      {
+        "network": "GitHub",
+        "username": "janedoe",
+        "url": "https://github.com/janedoe"
+      }
+    ]
+  },
+  "work": [
+    {
+      "name": "Example Co",
+      "position": "Backend Engineer",
+      "summary": "Built Python services and SQL pipelines.",
+      "highlights": [
+        "Maintained Python APIs",
+        "Improved SQL reporting"
+      ]
+    }
+  ],
+  "skills": [
+    {
+      "name": "Python",
+      "keywords": ["FastAPI", "SQL", "AWS"]
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+rank_model_version: bootstrap-v1
+stale_days: 30
+minimum_score: 45.0
+minimum_salary: null
+require_remote: null
+relocation_allowed: null
+blocked_companies: null
+blocked_title_keywords: null
+weights:
+  title_alignment: 30.0
+  must_have_skills: 35.0
+  preferred_skills: 10.0
+  location_fit: 10.0
+  remote_fit: 10.0
+  recency: 5.0

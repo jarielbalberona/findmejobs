@@ -11,6 +11,7 @@ from findmejobs.review.client import FilesystemOpenClawClient
 from findmejobs.review.importer import import_review_result
 from findmejobs.review.packets import build_review_packet
 from findmejobs.utils.hashing import sha256_hexdigest
+from findmejobs.utils.time import utcnow
 
 
 def export_review_packets(session: Session, app_config: AppConfig, profile: ProfileConfig, id_factory) -> int:
@@ -19,21 +20,34 @@ def export_review_packets(session: Session, app_config: AppConfig, profile: Prof
         select(JobCluster, JobScore, NormalizedJob)
         .join(JobScore, JobScore.cluster_id == JobCluster.id)
         .join(NormalizedJob, NormalizedJob.id == JobCluster.representative_job_id)
-        .outerjoin(ReviewPacket, ReviewPacket.job_score_id == JobScore.id)
-        .outerjoin(OpenClawReview, OpenClawReview.review_packet_id == ReviewPacket.id)
         .where(JobScore.passed_hard_filters.is_(True))
         .where(JobScore.score_total >= profile.ranking.minimum_score)
-        .where(OpenClawReview.id.is_(None))
     )
     exported = 0
     for cluster, score, job_row in session.execute(stmt):
+        existing_packet = session.scalar(
+            select(ReviewPacket).where(
+                ReviewPacket.cluster_id == cluster.id,
+                ReviewPacket.job_score_id == score.id,
+                ReviewPacket.packet_version == "v1",
+            )
+        )
+        if existing_packet is not None:
+            existing_review = session.scalar(
+                select(OpenClawReview.id).where(OpenClawReview.review_packet_id == existing_packet.id)
+            )
+            if existing_review is not None:
+                continue
         job = canonical_job_from_row(job_row)
         packet_id = sha256_hexdigest(f"{cluster.id}|{score.id}|v1")[:26]
         packet = build_review_packet(packet_id, cluster.id, job, score.score_total, score.score_breakdown_json)
+        packet_digest = sha256_hexdigest(packet.model_dump_json())
+        if existing_packet is not None and existing_packet.packet_sha256 == packet_digest and existing_packet.exported_at is not None:
+            continue
         record = upsert_review_packet(session, cluster.id, score.id, packet, id_factory)
         client.export_packet(packet)
         record.status = "exported"
-        record.exported_at = record.built_at
+        record.exported_at = utcnow()
         exported += 1
     session.commit()
     return exported

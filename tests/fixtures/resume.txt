@@ -1,0 +1,7 @@
+Jane Doe
+jane@example.com
+Manila, Philippines
+
+Senior Backend Engineer with 7 years building Python, SQL, FastAPI, and AWS systems.
+Target roles: Backend Engineer, Platform Engineer.
+Prefers remote work across the Philippines or Singapore.

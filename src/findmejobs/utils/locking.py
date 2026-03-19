@@ -12,7 +12,7 @@ class FileLock:
     def __enter__(self) -> "FileLock":
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._handle = self.path.open("a+", encoding="utf-8")
-        fcntl.flock(self._handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(self._handle.fileno(), fcntl.LOCK_EX)
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:

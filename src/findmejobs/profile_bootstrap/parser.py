@@ -14,8 +14,17 @@ EXPLICIT_HARD_PREFERENCE_FIELDS = {
 def build_profile_draft(extraction: ResumeExtractionDraft) -> ProfileConfigDraft:
     return ProfileConfigDraft(
         full_name=extraction.full_name,
+        headline=extraction.headline,
         email=extraction.email,
+        phone=extraction.phone,
         location_text=extraction.location_text,
+        github_url=extraction.github_url,
+        linkedin_url=extraction.linkedin_url,
+        years_experience=extraction.years_experience,
+        summary=extraction.summary,
+        strengths=extraction.strengths,
+        recent_titles=extraction.recent_titles,
+        recent_companies=extraction.recent_companies,
         target_titles=extraction.target_titles,
         required_skills=extraction.required_skills,
         preferred_skills=extraction.preferred_skills,
@@ -32,6 +41,8 @@ def build_ranking_draft(extraction: ResumeExtractionDraft) -> RankingConfigDraft
         relocation_allowed=extraction.relocation_allowed if "relocation_allowed" in explicit_fields else None,
         blocked_companies=extraction.blocked_companies if "blocked_companies" in explicit_fields else None,
         blocked_title_keywords=extraction.blocked_title_keywords if "blocked_title_keywords" in explicit_fields else None,
+        preferred_timezones=extraction.preferred_timezones or None,
+        title_families=extraction.title_families or None,
     )
 
 

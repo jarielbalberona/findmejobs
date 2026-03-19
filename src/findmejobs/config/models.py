@@ -193,8 +193,17 @@ class ProfileConfig(BaseModel):
     version: str
     rank_model_version: str = "slice2-default"
     full_name: str | None = None
+    headline: str | None = None
     email: str | None = None
+    phone: str | None = None
     location_text: str | None = None
+    github_url: str | None = None
+    linkedin_url: str | None = None
+    years_experience: int | None = None
+    summary: str | None = None
+    strengths: list[str] = Field(default_factory=list)
+    recent_titles: list[str] = Field(default_factory=list)
+    recent_companies: list[str] = Field(default_factory=list)
     target_titles: list[str]
     required_skills: list[str] = Field(default_factory=list)
     preferred_skills: list[str] = Field(default_factory=list)

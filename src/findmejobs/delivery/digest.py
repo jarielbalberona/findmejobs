@@ -90,6 +90,7 @@ def send_digest(
     sender: SMTPEmailSender | None = None,
     digest_date: str | None = None,
     resend_of_digest_id: str | None = None,
+    dry_run: bool = False,
 ) -> Digest:
     digest_date = digest_date or utcnow().strftime("%Y-%m-%d")
     existing = session.scalar(
@@ -133,6 +134,10 @@ def send_digest(
             score_at_send=candidate.score,
         )
     session.flush()
+
+    if dry_run:
+        digest.status = "dry_run"
+        return digest
 
     sender = sender or SMTPEmailSender(app_config.delivery.email)
     try:

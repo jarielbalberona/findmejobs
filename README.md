@@ -235,15 +235,19 @@ state/profile_bootstrap/drafts/profile.draft.yaml
 state/profile_bootstrap/drafts/ranking.draft.yaml
 state/profile_bootstrap/drafts/missing_fields.yaml
 state/profile_bootstrap/drafts/import_report.md
+state/profile_bootstrap/drafts/raw_draft_response.json
 config/profile.yaml
 config/ranking.yaml
 ```
 
 Behavior rules:
 - extracted text is persisted before any OpenClaw-assisted draft generation
+- deterministic baseline extraction populates obvious resume facts before any OpenClaw refinement
+- raw draft-generation output is saved before parsing into final YAML and Markdown artifacts
 - resume import is bootstrap input only, not final truth
 - missing and low-confidence fields are surfaced in draft artifacts
 - hard preferences such as salary floor, remote-only requirement, blocked companies, and blocked titles are left unset unless explicitly stated
+- weak or practically empty drafts fail validation instead of being written as misleading placeholders
 - promotion validates the draft and fails clearly if incomplete
 - reimport comparison does not silently overwrite explicit canonical preferences
 - runtime commands can load the promoted `config/profile.yaml` plus sibling `config/ranking.yaml`

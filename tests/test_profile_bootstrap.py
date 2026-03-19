@@ -22,17 +22,29 @@ class PendingClient:
         self.request_path.write_text(packet.model_dump_json(indent=2), encoding="utf-8")
         return self.request_path
 
-    def load_result(self, expected_import_id: str):
+    def load_result_text(self):
         return None
+
+    def _expected_import_id(self) -> str:
+        return json.loads(self.request_path.read_text(encoding="utf-8"))["import_id"]
 
 
 class ResultClient(PendingClient):
-    def load_result(self, expected_import_id: str):
+    def load_result_text(self):
         return ResumeExtractionDraft(
-            import_id=expected_import_id,
+            import_id=self._expected_import_id(),
             full_name="Jane Doe",
+            headline="Senior Backend Engineer",
             email="jane@example.com",
+            phone="+63 917 000 0000",
             location_text="Manila, Philippines",
+            github_url="https://github.com/janedoe",
+            linkedin_url="https://linkedin.com/in/janedoe",
+            years_experience=7,
+            summary="Senior Backend Engineer with 7 years building Python, SQL, FastAPI, and AWS systems.",
+            strengths=["Python", "SQL", "FastAPI", "AWS"],
+            recent_titles=["Senior Backend Engineer"],
+            recent_companies=["Example Co"],
             target_titles=["Backend Engineer", "Platform Engineer"],
             required_skills=["Python", "SQL"],
             preferred_skills=["FastAPI", "AWS"],
@@ -41,13 +53,13 @@ class ResultClient(PendingClient):
             evidence={"target_titles": ["Target roles: Backend Engineer, Platform Engineer"]},
             low_confidence_fields=["allowed_countries"],
             explicit_fields=[],
-        )
+        ).model_dump_json(indent=2)
 
 
 class HardPreferenceClient(PendingClient):
-    def load_result(self, expected_import_id: str):
+    def load_result_text(self):
         return ResumeExtractionDraft(
-            import_id=expected_import_id,
+            import_id=self._expected_import_id(),
             full_name="Jane Doe",
             target_titles=["Backend Engineer"],
             required_skills=["Python"],
@@ -56,27 +68,32 @@ class HardPreferenceClient(PendingClient):
             require_remote=True,
             blocked_companies=["Bad Co"],
             explicit_fields=["minimum_salary", "require_remote", "blocked_companies"],
-        )
+        ).model_dump_json(indent=2)
 
 
 class RefinementClient(PendingClient):
-    def load_result(self, expected_import_id: str):
+    def load_result_text(self):
         if self.request_path.name == "profile_refinement_packet.json":
             return ResumeExtractionDraft(
-                import_id=expected_import_id,
+                import_id=self._expected_import_id(),
                 preferred_skills=["AWS", "FastAPI"],
                 preferred_locations=["Remote"],
                 low_confidence_fields=["preferred_locations"],
-            )
+            ).model_dump_json(indent=2)
         return ResumeExtractionDraft(
-            import_id=expected_import_id,
+            import_id=self._expected_import_id(),
             full_name="Jane Doe",
             email="jane@example.com",
             location_text="Manila, Philippines",
             target_titles=["Backend Engineer"],
             required_skills=["Python", "SQL"],
             explicit_fields=[],
-        )
+        ).model_dump_json(indent=2)
+
+
+class MalformedClient(PendingClient):
+    def load_result_text(self):
+        return '{"import_id": "bad",'
 
 
 @pytest.fixture()
@@ -116,7 +133,7 @@ def test_pdf_and_docx_dispatch_use_format_extractors(tmp_path: Path, monkeypatch
     assert _extract_file_text(docx)[0] == "docx text"
 
 
-def test_import_persists_extracted_text_before_openclaw_result_and_generates_missing_fields(
+def test_import_uses_deterministic_baseline_when_openclaw_result_is_pending(
     fixtures_dir: Path,
     bootstrap_paths: tuple[Path, Path],
     monkeypatch,
@@ -134,15 +151,22 @@ def test_import_persists_extracted_text_before_openclaw_result_and_generates_mis
     assert metadata.extraction_pending is True
     assert paths.extracted_text_path.exists()
     assert "Jane Doe" in paths.extracted_text_path.read_text(encoding="utf-8")
+    profile = load_yaml(paths.profile_draft_path)
     missing = load_yaml(paths.missing_fields_path)
-    assert missing["missing"]
-    assert any(item["field"] == "target_titles" for item in missing["missing"])
+    raw_response = json.loads(paths.raw_draft_response_path.read_text(encoding="utf-8"))
+    assert profile["full_name"] == "Jane Doe"
+    assert profile["headline"] == "Senior Backend Engineer"
+    assert profile["target_titles"] == ["Backend Engineer", "Platform Engineer"]
+    assert profile["required_skills"] == ["Python", "SQL", "FastAPI", "AWS"]
+    assert not any(item["field"] == "target_titles" for item in missing["missing"])
+    assert raw_response["target_titles"] == ["Backend Engineer", "Platform Engineer"]
     meta_payload = json.loads(paths.extracted_meta_path.read_text(encoding="utf-8"))
     assert meta_payload["extraction_pending"] is True
     assert meta_payload["stored_input_path"].endswith("resume.txt")
     assert meta_payload["char_count"] > 0
     assert meta_payload["original_sha256"]
     assert meta_payload["extracted_text_sha256"]
+    assert meta_payload["detected_links"] == []
 
 
 def test_import_generates_profile_and_ranking_drafts_with_openclaw_result(
@@ -163,12 +187,16 @@ def test_import_generates_profile_and_ranking_drafts_with_openclaw_result(
     profile = load_yaml(paths.profile_draft_path)
     ranking = load_yaml(paths.ranking_draft_path)
     report = paths.import_report_path.read_text(encoding="utf-8")
+    raw_response = json.loads(paths.raw_draft_response_path.read_text(encoding="utf-8"))
     assert metadata.extraction_pending is False
     assert profile["full_name"] == "Jane Doe"
+    assert profile["headline"] == "Senior Backend Engineer"
+    assert profile["github_url"] == "https://github.com/janedoe"
     assert profile["target_titles"] == ["Backend Engineer", "Platform Engineer"]
     assert ranking["minimum_salary"] is None
     assert ranking["require_remote"] is None
     assert ranking["blocked_companies"] is None
+    assert raw_response["import_id"] == metadata.import_id
     assert "allowed_countries" in report
     assert "Low Confidence Fields" in report
     assert not paths.canonical_profile_path.exists()
@@ -195,6 +223,7 @@ def test_pasted_text_import_works(
     assert metadata.original_filename == "pasted.txt"
     assert paths.extracted_text_path.read_text(encoding="utf-8").startswith("Jane Doe")
     assert Path(metadata.stored_input_path).name == "pasted.txt"
+    assert load_yaml(paths.profile_draft_path)["full_name"] == "Jane Doe"
 
 
 def test_refresh_pending_import_consumes_openclaw_result(
@@ -226,6 +255,7 @@ def test_refresh_pending_import_consumes_openclaw_result(
     assert refreshed.extraction_pending is False
     profile = load_yaml(paths.profile_draft_path)
     assert profile["target_titles"] == ["Backend Engineer"]
+    assert json.loads(paths.raw_draft_response_path.read_text(encoding="utf-8"))["import_id"] == "import-1"
 
 
 def test_refresh_pending_import_rejects_result_without_import_id(
@@ -245,7 +275,7 @@ def test_refresh_pending_import_rejects_result_without_import_id(
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError):
+    with pytest.raises(RuntimeError):
         service.refresh_pending_import()
 
 
@@ -296,7 +326,9 @@ def test_validation_fails_on_missing_required_fields(bootstrap_paths: tuple[Path
     paths.profile_draft_path.write_text('{"version":"bootstrap-v1","target_titles":[],"required_skills":[],"preferred_skills":[],"preferred_locations":[],"allowed_countries":[]}', encoding="utf-8")
     paths.ranking_draft_path.write_text('{"rank_model_version":"bootstrap-v1","minimum_score":45.0,"stale_days":30}', encoding="utf-8")
     paths.missing_fields_path.write_text('{"missing":[{"field":"target_titles","reason":"required","required_for_promotion":true}],"low_confidence_fields":[]}', encoding="utf-8")
-    assert "missing_required_fields" in service.validate_draft()
+    result = service.validate_draft()
+    assert result.status == "failed"
+    assert "draft_practically_empty" in result.errors
 
 
 def test_validation_flags_invalid_email_and_invalid_salary(bootstrap_paths: tuple[Path, Path]) -> None:
@@ -313,10 +345,10 @@ def test_validation_flags_invalid_email_and_invalid_salary(bootstrap_paths: tupl
         encoding="utf-8",
     )
     paths.missing_fields_path.write_text('{"missing":[],"low_confidence_fields":[]}', encoding="utf-8")
-    errors = service.validate_draft()
-    assert "invalid_email" in errors
-    assert "invalid_minimum_salary" in errors
-    assert "invalid_stale_days" not in errors
+    result = service.validate_draft()
+    assert "invalid_email" in result.errors
+    assert "invalid_minimum_salary" in result.errors
+    assert "invalid_stale_days" not in result.errors
 
 
 def test_promote_draft_writes_canonical_yaml(
@@ -340,6 +372,7 @@ def test_promote_draft_writes_canonical_yaml(
     assert diff.protected_conflicts == []
     runtime_profile = load_profile_config(paths.canonical_profile_path)
     assert runtime_profile.target_titles == ["Backend Engineer", "Platform Engineer"]
+    assert runtime_profile.summary == "Senior Backend Engineer with 7 years building Python, SQL, FastAPI, and AWS systems."
 
 
 def test_invalid_draft_does_not_promote_or_write_canonical_files(bootstrap_paths: tuple[Path, Path]) -> None:
@@ -363,6 +396,68 @@ def test_invalid_draft_does_not_promote_or_write_canonical_files(bootstrap_paths
         service.promote_draft()
     assert not paths.canonical_profile_path.exists()
     assert not paths.canonical_ranking_path.exists()
+
+
+def test_malformed_openclaw_result_fails_clearly_and_saves_raw_response(
+    fixtures_dir: Path,
+    bootstrap_paths: tuple[Path, Path],
+    monkeypatch,
+) -> None:
+    state_root, config_root = bootstrap_paths
+    monkeypatch.setattr(
+        "findmejobs.profile_bootstrap.service.FilesystemProfileBootstrapOpenClawClient",
+        MalformedClient,
+    )
+    service = ProfileBootstrapService(state_root=state_root, config_root=config_root)
+
+    with pytest.raises(RuntimeError, match="draft_generation_result_invalid"):
+        service.import_resume(file_path=fixtures_dir / "resume.txt", pasted_text=None)
+
+    paths = prepare_paths(state_root, config_root)
+    assert paths.raw_draft_response_path.exists()
+    assert paths.profile_draft_path.exists() is False
+
+
+def test_rich_resume_text_produces_substantial_baseline_draft(
+    fixtures_dir: Path,
+    bootstrap_paths: tuple[Path, Path],
+    monkeypatch,
+) -> None:
+    state_root, config_root = bootstrap_paths
+    monkeypatch.setattr(
+        "findmejobs.profile_bootstrap.service.FilesystemProfileBootstrapOpenClawClient",
+        PendingClient,
+    )
+    service = ProfileBootstrapService(state_root=state_root, config_root=config_root)
+
+    metadata = service.import_resume(file_path=fixtures_dir / "rich_resume.txt", pasted_text=None)
+
+    paths = prepare_paths(state_root, config_root)
+    profile = load_yaml(paths.profile_draft_path)
+    ranking = load_yaml(paths.ranking_draft_path)
+    missing = load_yaml(paths.missing_fields_path)
+    report = paths.import_report_path.read_text(encoding="utf-8")
+
+    assert metadata.char_count > 2000
+    assert profile["full_name"] == "Jariel Balberona"
+    assert profile["headline"] == "Senior Fullstack Engineer"
+    assert profile["years_experience"] == 10
+    assert profile["location_text"] == "Philippines (Remote)"
+    assert profile["email"] == "jarielbalb@gmail.com"
+    assert profile["phone"] == "+63 917 657 0260"
+    assert profile["github_url"] == "https://github.com/jarielbalberona"
+    assert profile["linkedin_url"] == "https://linkedin.com/in/jarielbalberona"
+    assert "TypeScript" in profile["required_skills"]
+    assert "React" in profile["required_skills"]
+    assert "Node.js" in profile["required_skills"]
+    assert "AWS" in profile["required_skills"] or "AWS" in profile["preferred_skills"]
+    assert "Senior Fullstack Engineer" in profile["target_titles"]
+    assert "Platform Engineer" in profile["target_titles"]
+    assert profile["summary"]
+    assert profile["strengths"]
+    assert ranking["title_families"]
+    assert not any(item["field"] == "target_titles" for item in missing["missing"])
+    assert "validation_status: `strong`" in report
 
 
 def test_reimport_does_not_overwrite_explicit_canonical_preferences(

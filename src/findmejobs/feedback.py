@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from findmejobs.db.models import JobCluster, JobFeedback, NormalizedJob
@@ -54,7 +54,14 @@ def record_feedback(
 def feedback_types_for_job(session: Session, *, cluster_id: str, company_name: str, title: str) -> list[str]:
     normalized_company = normalize_company_name(company_name)
     normalized_title_value = normalize_title(title)
-    rows = session.scalars(select(JobFeedback)).all()
+    rows = session.scalars(
+        select(JobFeedback).where(
+            or_(
+                JobFeedback.cluster_id == cluster_id,
+                JobFeedback.feedback_type.in_(["blocked_company", "blocked_title"]),
+            )
+        )
+    ).all()
     types: list[str] = []
     for row in rows:
         if row.cluster_id == cluster_id:

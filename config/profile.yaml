@@ -1,0 +1,49 @@
+version: bootstrap-v1
+full_name: Jariel Balberona
+headline: Senior Fullstack Engineer
+email: jarielbalb@gmail.com
+phone: +63 917 657 0260
+location_text: Philippines (Remote)
+github_url: https://github.com/jarielbalberona
+linkedin_url: https://linkedin.com/in/jarielbalberona
+years_experience: 10
+summary: Senior Fullstack Engineer | System Architecture | Cloud + DevOps | 10 years
+  Philippines (Remote) jarielbalb@gmail.
+strengths:
+- System Architecture
+- Cloud + DevOps
+- TypeScript
+- React
+- Node.js
+- PostgreSQL
+recent_titles:
+- Software Engineer
+- Web Software Developer
+- Fullstack JavaScript Developer
+recent_companies:
+- DataGPT AI
+- Arcanys
+- IdeaRobin
+target_titles:
+- Senior Fullstack Engineer
+- Fullstack Engineer
+- Software Engineer
+- Platform Engineer
+- Web Software Developer
+- Fullstack JavaScript Developer
+required_skills:
+- TypeScript
+- React
+- Node.js
+- PostgreSQL
+- AWS
+- Terraform
+preferred_skills:
+- Docker
+- Next.js
+- Vite
+- NestJS
+- REST APIs
+- Redis
+preferred_locations: []
+allowed_countries: []

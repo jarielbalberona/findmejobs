@@ -17,10 +17,12 @@ class ResultClient:
         self.request_path.write_text(packet.model_dump_json(indent=2), encoding="utf-8")
         return self.request_path
 
-    def load_result(self, expected_import_id: str):
+    def load_result_text(self):
+        expected_import_id = json.loads(self.request_path.read_text(encoding="utf-8"))["import_id"]
         return ResumeExtractionDraft(
             import_id=expected_import_id,
             full_name="Jane Doe",
+            headline="Senior Backend Engineer",
             email="jane@example.com",
             location_text="Manila, Philippines",
             target_titles=["Backend Engineer"],
@@ -28,7 +30,7 @@ class ResultClient:
             preferred_skills=["SQL"],
             preferred_locations=["Remote"],
             explicit_fields=[],
-        )
+        ).model_dump_json(indent=2)
 
 
 def test_profile_cli_flow(
@@ -78,6 +80,7 @@ def test_profile_cli_flow(
         ["profile", "validate-draft", "--state-root", str(state_root), "--config-root", str(config_root)],
     )
     assert result.exit_code == 0
+    assert "status=strong" in result.stdout
 
     result = cli_runner.invoke(
         app,

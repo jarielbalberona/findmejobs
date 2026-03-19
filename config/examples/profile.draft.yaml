@@ -1,7 +1,22 @@
 version: bootstrap-v1
 full_name: Jane Doe
+headline: Senior Backend Engineer
 email: jane@example.com
+phone: +63 917 000 0000
 location_text: Manila, Philippines
+github_url: https://github.com/janedoe
+linkedin_url: https://linkedin.com/in/janedoe
+years_experience: 7
+summary: Senior Backend Engineer with 7 years building Python, SQL, FastAPI, and AWS systems.
+strengths:
+  - Python
+  - SQL
+  - FastAPI
+  - AWS
+recent_titles:
+  - Senior Backend Engineer
+recent_companies:
+  - Example Co
 target_titles:
   - Backend Engineer
   - Platform Engineer

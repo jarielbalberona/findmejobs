@@ -12,7 +12,7 @@ from findmejobs.utils.time import utcnow
 
 
 SUPPORTED_SUFFIXES = {".pdf", ".docx", ".txt", ".md", ".json"}
-LINK_RE = re.compile(r"https?://[^\s<>()\"']+")
+LINK_RE = re.compile(r"(?:https?://)?(?:github\.com|linkedin\.com)/[^\s<>()\"']+|https?://[^\s<>()\"']+", re.IGNORECASE)
 
 
 def prepare_paths(state_root: Path, config_root: Path) -> ImportPaths:
@@ -29,6 +29,7 @@ def prepare_paths(state_root: Path, config_root: Path) -> ImportPaths:
         ranking_draft_path=state_root / "drafts" / "ranking.draft.yaml",
         missing_fields_path=state_root / "drafts" / "missing_fields.yaml",
         import_report_path=state_root / "drafts" / "import_report.md",
+        raw_draft_response_path=state_root / "drafts" / "raw_draft_response.json",
         diff_path=state_root / "drafts" / "reimport_diff.yaml",
         canonical_profile_path=config_root / "profile.yaml",
         canonical_ranking_path=config_root / "ranking.yaml",
@@ -228,8 +229,9 @@ def _detect_links(text: str) -> list[str]:
     links: list[str] = []
     seen: set[str] = set()
     for match in LINK_RE.findall(text):
-        if match in seen:
+        normalized = match if match.startswith("http://") or match.startswith("https://") else f"https://{match}"
+        if normalized in seen:
             continue
-        seen.add(match)
-        links.append(match)
+        seen.add(normalized)
+        links.append(normalized)
     return links

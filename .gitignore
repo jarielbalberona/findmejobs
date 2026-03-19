@@ -5,3 +5,10 @@ __pycache__/
 .venv/
 var/
 test-cv.pdf
+
+state/**
+!state/.gitkeep
+
+*.db
+*.sqlite
+*.sqlite3

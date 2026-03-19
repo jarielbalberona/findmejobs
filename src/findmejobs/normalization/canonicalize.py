@@ -132,13 +132,44 @@ def parse_salary(value: str | None) -> tuple[int | None, int | None, str | None,
         currency = "USD"
     elif "php" in lowered or "₱" in value:
         currency = "PHP"
-    period = "year" if any(token in lowered for token in ("per year", "/year", "annual", "yr")) else None
-    matches = [int(match.replace(",", "")) for match in re.findall(r"\b\d{2,3}(?:,\d{3})+\b", value)]
-    if len(matches) >= 2:
-        return min(matches), max(matches), currency, period
-    if len(matches) == 1:
-        return matches[0], matches[0], currency, period
+    elif "gbp" in lowered or "£" in value:
+        currency = "GBP"
+    elif "eur" in lowered or "€" in value:
+        currency = "EUR"
+    period = _infer_salary_period(lowered)
+    amounts = _extract_salary_amounts(value)
+    if len(amounts) >= 2:
+        return min(amounts), max(amounts), currency, period
+    if len(amounts) == 1:
+        return amounts[0], amounts[0], currency, period
     return None, None, currency, period
+
+
+def _infer_salary_period(lowered: str) -> str | None:
+    if any(token in lowered for token in ("per year", "/year", "/yr", "annual", "p.a.", "per annum")):
+        return "year"
+    if any(token in lowered for token in ("per month", "/month", "/ month", "/mo", "monthly")):
+        return "month"
+    if any(token in lowered for token in ("per hour", "/hour", "/ hour", "/hr", "/ hr", "hourly")):
+        return "hour"
+    return None
+
+
+def _extract_salary_amounts(value: str) -> list[int]:
+    amounts: list[int] = []
+    for match in re.findall(r"\b\d{2,3}(?:,\d{3})+\b", value):
+        amounts.append(int(match.replace(",", "")))
+    if amounts:
+        return amounts
+    for match in re.finditer(r"\b(\d{2,4})\s*[kK]\b", value):
+        amounts.append(int(match.group(1)) * 1000)
+    if amounts:
+        return amounts
+    for match in re.finditer(r"[\$₱£€]\s*(\d{2,4})\b", value):
+        raw = int(match.group(1))
+        if raw >= 15:
+            amounts.append(raw)
+    return amounts
 
 
 def description_hash(value: str) -> str:

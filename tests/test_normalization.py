@@ -90,5 +90,37 @@ def test_malformed_fields_are_handled_safely() -> None:
     assert job.salary_max is None
 
 
+@pytest.mark.parametrize(
+    ("salary_text", "expected_min", "expected_max", "expected_currency", "expected_period"),
+    [
+        ("$100,000 - $150,000 per year", 100000, 150000, "USD", "year"),
+        ("100k - 150k", 100000, 150000, None, None),
+        ("$120K", 120000, 120000, "USD", None),
+        ("$45/hr", 45, 45, "USD", "hour"),
+        ("£60k per year", 60000, 60000, "GBP", "year"),
+        ("€50K - €70K per annum", 50000, 70000, "EUR", "year"),
+        ("PHP 90,000 - 120,000 / month", 90000, 120000, "PHP", "month"),
+        ("₱80,000 per month", 80000, 80000, "PHP", "month"),
+        ("competitive", None, None, None, None),
+        ("", None, None, None, None),
+        (None, None, None, None, None),
+    ],
+)
+def test_parse_salary_handles_various_formats(
+    salary_text: str | None,
+    expected_min: int | None,
+    expected_max: int | None,
+    expected_currency: str | None,
+    expected_period: str | None,
+) -> None:
+    from findmejobs.normalization.canonicalize import parse_salary
+
+    sal_min, sal_max, currency, period = parse_salary(salary_text)
+    assert sal_min == expected_min, f"min: {sal_min} != {expected_min} for {salary_text!r}"
+    assert sal_max == expected_max, f"max: {sal_max} != {expected_max} for {salary_text!r}"
+    assert currency == expected_currency, f"currency: {currency} != {expected_currency} for {salary_text!r}"
+    assert period == expected_period, f"period: {period} != {expected_period} for {salary_text!r}"
+
+
 def test_source_job_key_logic_is_stable() -> None:
     assert canonical_rss_key("https://example.test/jobs/1", "Role") == canonical_rss_key("https://example.test/jobs/1", "Role")

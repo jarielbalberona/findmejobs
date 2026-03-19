@@ -17,7 +17,7 @@ class ProfileBootstrapOpenClawClient(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def load_result(self, expected_import_id: str) -> ResumeExtractionDraft | None:
+    def load_result_text(self) -> str | None:
         raise NotImplementedError
 
 
@@ -34,11 +34,15 @@ class FilesystemProfileBootstrapOpenClawClient(ProfileBootstrapOpenClawClient):
         self.request_path.write_text(packet.model_dump_json(indent=2), encoding="utf-8")
         return self.request_path
 
-    def load_result(self, expected_import_id: str) -> ResumeExtractionDraft | None:
+    def load_result_text(self) -> str | None:
         if not self.result_path.exists():
             return None
-        payload = json.loads(self.result_path.read_text(encoding="utf-8"))
-        result = ResumeExtractionDraft.model_validate(payload)
-        if result.import_id != expected_import_id:
-            raise ValueError(f"stale_openclaw_result:{result.import_id}")
-        return result
+        return self.result_path.read_text(encoding="utf-8")
+
+
+def parse_openclaw_result(raw_text: str, expected_import_id: str) -> ResumeExtractionDraft:
+    payload = json.loads(raw_text)
+    result = ResumeExtractionDraft.model_validate(payload)
+    if result.import_id != expected_import_id:
+        raise ValueError(f"stale_openclaw_result:{result.import_id}")
+    return result

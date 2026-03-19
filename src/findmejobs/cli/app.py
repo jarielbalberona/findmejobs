@@ -234,6 +234,7 @@ def digest_send(
     profile_path: Path = typer.Option(Path("config/profile.toml")),
     sources_dir: Path = typer.Option(Path("config/sources.d"), exists=True, file_okay=False),
     digest_date: str | None = typer.Option(None),
+    dry_run: bool = typer.Option(False, help="Build digest without sending email"),
 ) -> None:
     app_config, profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_dir)
     with FileLock(_pipeline_lock_path(app_config)):
@@ -241,10 +242,14 @@ def digest_send(
             run = create_pipeline_run(session, "digest_send", new_id)
             session.commit()
             try:
-                digest = send_digest(session, app_config, profile, id_factory=new_id, digest_date=digest_date)
-                finish_pipeline_run(run, "success", {"digest_id": digest.id, "status": digest.status})
+                digest = send_digest(session, app_config, profile, id_factory=new_id, digest_date=digest_date, dry_run=dry_run)
+                finish_pipeline_run(run, "success", {"digest_id": digest.id, "status": digest.status, "dry_run": dry_run})
                 session.commit()
-                typer.echo(f"digest send complete: digest_id={digest.id} status={digest.status}")
+                if dry_run:
+                    typer.echo(f"digest dry-run complete: digest_id={digest.id} items={len(digest.body_text.splitlines())}")
+                    typer.echo(digest.body_text)
+                else:
+                    typer.echo(f"digest send complete: digest_id={digest.id} status={digest.status}")
             except Exception as exc:
                 finish_pipeline_run(run, "failed", error_message=str(exc))
                 session.commit()
@@ -258,6 +263,7 @@ def digest_resend(
     profile_path: Path = typer.Option(Path("config/profile.toml")),
     sources_dir: Path = typer.Option(Path("config/sources.d"), exists=True, file_okay=False),
     digest_date: str = typer.Option(...),
+    dry_run: bool = typer.Option(False, help="Build digest without sending email"),
 ) -> None:
     app_config, profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_dir)
     with FileLock(_pipeline_lock_path(app_config)):
@@ -276,10 +282,15 @@ def digest_resend(
                     id_factory=new_id,
                     digest_date=digest_date,
                     resend_of_digest_id=original.id,
+                    dry_run=dry_run,
                 )
-                finish_pipeline_run(run, "success", {"digest_id": digest.id, "status": digest.status, "resend_of": original.id})
+                finish_pipeline_run(run, "success", {"digest_id": digest.id, "status": digest.status, "resend_of": original.id, "dry_run": dry_run})
                 session.commit()
-                typer.echo(f"digest resend complete: digest_id={digest.id} status={digest.status}")
+                if dry_run:
+                    typer.echo(f"digest resend dry-run complete: digest_id={digest.id}")
+                    typer.echo(digest.body_text)
+                else:
+                    typer.echo(f"digest resend complete: digest_id={digest.id} status={digest.status}")
             except Exception as exc:
                 finish_pipeline_run(run, "failed", error_message=str(exc))
                 session.commit()
@@ -651,14 +662,14 @@ def profile_validate_draft(
 ) -> None:
     service = _profile_service(state_root, config_root)
     try:
-        errors = service.validate_draft()
+        result = service.validate_draft()
     except FileNotFoundError as exc:
         typer.echo(f"profile validate-draft failed: {exc}")
         raise typer.Exit(code=1)
-    if errors:
-        typer.echo(f"profile draft invalid: {errors}")
+    if result.errors:
+        typer.echo(f"profile draft invalid: status={result.status} errors={result.errors}")
         raise typer.Exit(code=1)
-    typer.echo("profile draft valid")
+    typer.echo(f"profile draft valid: status={result.status}")
 
 
 @profile_app.command("diff")

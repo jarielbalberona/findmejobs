@@ -889,6 +889,102 @@ def test_slice2_migration_preserves_slice1_rows(tmp_path: Path, project_root: Pa
         assert session.scalar(select(func.count()).select_from(DeliveryEvent)) == 0
 
 
+def test_feedback_query_only_fetches_relevant_rows(migrated_runtime_config_files: tuple[Path, Path, Path]) -> None:
+    """Verify that feedback_types_for_job returns correct results using filtered query."""
+    app_path, profile_path, _sources_dir = migrated_runtime_config_files
+    app_config = load_app_config(app_path)
+    profile = load_profile_config(profile_path)
+    session_factory = create_session_factory(app_config.database.url)
+    with session_factory() as session:
+        _seed_reviewable_cluster(
+            session,
+            profile,
+            cluster_id="cluster-a",
+            source_id="source-a",
+            source_name="lever-a",
+            source_kind="lever",
+            normalized_id="norm-a",
+            source_job_id="sj-a",
+            source_job_key="job-a",
+            title="Backend Engineer",
+            company="Acme Corp",
+            location_text="Remote, Philippines",
+        )
+        _seed_reviewable_cluster(
+            session,
+            profile,
+            cluster_id="cluster-b",
+            source_id="source-b",
+            source_name="lever-b",
+            source_kind="lever",
+            normalized_id="norm-b",
+            source_job_id="sj-b",
+            source_job_key="job-b",
+            title="Frontend Engineer",
+            company="Other Inc",
+            location_text="Manila",
+        )
+        record_feedback(session, id_factory=new_id, feedback_type="relevant", cluster_id="cluster-a")
+        record_feedback(session, id_factory=new_id, feedback_type="irrelevant", cluster_id="cluster-b")
+        record_feedback(session, id_factory=new_id, feedback_type="blocked_company", company_name="Bad Co")
+        session.commit()
+
+        types_a = feedback_types_for_job(session, cluster_id="cluster-a", company_name="Acme Corp", title="Backend Engineer")
+        assert "relevant" in types_a
+        assert "irrelevant" not in types_a
+        assert "blocked_company" not in types_a
+
+        types_b = feedback_types_for_job(session, cluster_id="cluster-b", company_name="Other Inc", title="Frontend Engineer")
+        assert "irrelevant" in types_b
+        assert "relevant" not in types_b
+
+        types_bad = feedback_types_for_job(session, cluster_id="cluster-x", company_name="Bad Co", title="Backend Engineer")
+        assert "blocked_company" in types_bad
+        assert "relevant" not in types_bad
+
+
+def test_send_digest_dry_run_does_not_send_email(migrated_runtime_config_files: tuple[Path, Path, Path]) -> None:
+    app_path, profile_path, _sources_dir = migrated_runtime_config_files
+    app_config = load_app_config(app_path)
+    profile = load_profile_config(profile_path)
+    session_factory = create_session_factory(app_config.database.url)
+    with session_factory() as session:
+        _seed_reviewable_cluster(
+            session,
+            profile,
+            cluster_id="cluster-dry",
+            source_id="source-dry",
+            source_name="lever-dry",
+            source_kind="lever",
+            normalized_id="norm-dry",
+            source_job_id="sj-dry",
+            source_job_key="job-dry",
+            title="Backend Engineer",
+            company="DryRun Corp",
+            location_text="Remote, Philippines",
+        )
+        session.commit()
+
+        class BoomSender:
+            def send(self, *, subject: str, body_text: str) -> str:
+                raise AssertionError("should not be called in dry_run mode")
+
+        digest = send_digest(
+            session,
+            app_config,
+            profile,
+            id_factory=new_id,
+            sender=BoomSender(),
+            digest_date="2026-03-20",
+            dry_run=True,
+        )
+        session.commit()
+
+        assert digest.status == "dry_run"
+        assert digest.sent_at is None
+        assert session.scalar(select(func.count()).select_from(DeliveryEvent).where(DeliveryEvent.digest_id == digest.id)) == 0
+
+
 def test_ph_board_observability_migration_adds_fetch_run_counters(tmp_path: Path, project_root: Path) -> None:
     database_url = f"sqlite:///{tmp_path / 'ph-board-observability.db'}"
     config = Config(str(project_root / "alembic.ini"))

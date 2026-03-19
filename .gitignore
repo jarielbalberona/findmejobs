@@ -19,3 +19,6 @@ config/sources.yaml
 *.db
 *.sqlite
 *.sqlite3
+
+
+.env

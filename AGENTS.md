@@ -181,6 +181,38 @@ Never upgrade to "clean source" status without evidence.
 
 ---
 
+## Adding sources (existing `kind` vs new adapter)
+
+Operators (and OpenClaw driving the CLI) add **config** with `findmejobs sources add`. That only works when `kind` is already implemented in Python. If the target site needs a **new** integration shape, an agent must **add an adapter in this repo** first—OpenClaw must **not** become the scraper of record (see core rule 1).
+
+### When an existing `kind` is enough
+
+1. Build one JSON object that matches `SourceConfig` for a supported `kind` (same fields as `config/examples/sources.d/*.toml` and `src/findmejobs/config/models.py`).
+2. Run `findmejobs sources add --json '<object>'` (or `--json-file`).
+3. Run `findmejobs doctor`, then `findmejobs ingest --source <name>`.
+
+OpenClaw may assemble the JSON from operator-provided URLs, board tokens, and labels. It must **not** fetch or parse raw job pages on behalf of the pipeline; the app does that on `ingest`.
+
+### When a new adapter is required
+
+Use this when there is **no** `kind` (and no existing adapter) that can fetch and parse that source correctly—for example a new public API shape or a new board HTML layout.
+
+**OpenClaw / coding agents may implement the adapter here** (edit Python, run tests). Do **not** instruct OpenClaw to “just crawl the site” instead of adding `ingestion` code; that violates the trust boundary.
+
+Implementation checklist (keep changes boring and testable):
+
+1. **Classify the source** (Tier A / B / C per [Source classification](#source-classification)). If the new `kind` fits an existing family, add it to the appropriate set in `src/findmejobs/domain/source.py` (`PREDICTABLE_ATS_KINDS`, `PH_BOARD_KINDS`, `DIRECT_PAGE_KINDS`, or `DISCOVERY_KINDS`). If it does not fit yet, leave it unlisted (metrics may show `unknown` until you classify it).
+2. **Config model** — In `src/findmejobs/config/models.py`, define a new `*SourceConfig` subclass of `SourceBaseConfig` with `kind: Literal["your_kind"]` and the fields the adapter needs (URLs, tokens, etc.). Append it to the `SourceConfig` discriminated union.
+3. **Adapter** — Add `src/findmejobs/ingestion/adapters/<your_kind>.py` implementing `SourceAdapter`: `build_url(config) -> str` and `parse(artifact, config) -> list[SourceJobRecord]` (use `parse_with_stats` when you need skip accounting). Use `validate_config_type` from `ingestion/adapters/base.py` against your config class.
+4. **Orchestrator** — In `src/findmejobs/ingestion/orchestrator.py`, import the new config and adapter classes and add a branch in `build_adapter()` that returns your adapter for that config type.
+5. **Example (optional)** — Add a commented or disabled example under `config/examples/sources.d/` for operators copying templates.
+6. **Tests** — Add adapter tests with **mocked HTTP** and fixture payloads: happy path, malformed payloads, and layout drift where relevant (see [Testing rules](#testing-rules)). Tier B–style sources need stronger parser tests.
+7. **Ship the source config** — Run `findmejobs sources add --json '...'` with the new `kind`, or add TOML by hand; then `doctor` and `ingest`.
+
+After this, OpenClaw chat can add **additional** sources of the same `kind` using `sources add` only—no further Python changes unless the site’s contract changes.
+
+---
+
 ## Repository expectations
 
 ### Module concerns
@@ -369,7 +401,10 @@ Expected commands:
 - `findmejobs profile diff`
 - `findmejobs profile promote-draft`
 - `findmejobs ingest` (optional `--source` filter by config name or adapter kind)
+- `findmejobs sources list` / `findmejobs sources add` (validated `sources.d` TOML; `add` takes `--json` or `--json-file`)
 - `findmejobs rank`
+- `findmejobs ranking explain` / `findmejobs ranking set` (inspect or patch scalar `ranking.yaml` fields)
+- `findmejobs jobs list` (ranked job previews for the current profile)
 - `findmejobs review export` / `findmejobs review import-results` (alias: `review import`)
 - `findmejobs digest send` (and `digest resend` where applicable)
 - `findmejobs report`
@@ -378,6 +413,93 @@ Expected commands:
 - `findmejobs reprocess`
 
 Dry-run modes should exist for destructive or external-output flows where practical.
+
+---
+
+## Minimal CLI surface (target)
+
+**Intent:** Let operators (and OpenClaw driving the CLI) update **validated** config without ad hoc YAML/TOML surgery. **Shipped:** `sources list` / `sources add` (JSON-in → validated `SourceConfig` → one TOML file), plus `ranking set` (scalar `ranking.yaml`), profile bootstrap/promote. The rest below is still **target** surface—implement incrementally; every write path should stay `model_validate` → write → `doctor`-clean.
+
+### Principles
+
+1. **Every write path:** load → Pydantic validate → persist → operator runs `doctor` (or the command runs an inline subset of those checks).
+2. **Prefer small verbs** over dumping arbitrary config trees. OpenClaw may pass flags or a **single** bounded `--json` blob for one resource (e.g. one source), not unbounded free-form YAML.
+3. **Secrets:** do not require SMTP passwords on the CLI (shell history). Prefer env vars or a gitignored secrets file; CLI only toggles non-secret delivery fields.
+4. **Lists:** support explicit **add / remove / replace** semantics so behavior stays deterministic and auditable.
+
+### Tier 1 — highest impact
+
+#### `findmejobs sources`
+
+| Command | Purpose |
+|--------|---------|
+| `sources list [--json]` | **Done.** Enumerate `config/sources.d/*.toml` (fails if any file is invalid). |
+| `sources add --json '<object>'` or `--json-file <path>` | **Done.** Validate one JSON object as `SourceConfig`, write `config/sources.d/<stem>.toml` (default stem from `name`; `--output-stem`, `--force`). Rejects duplicate `name` already present in another file. |
+| `sources set <name>` | **Target.** Patch only `SourceBaseConfig` scalars: `enabled`, `priority`, `trust_weight`, `fetch_cap`; optional `--add-blocked-title-keyword` / `--remove-blocked-title-keyword`. |
+| `sources remove <name> [--yes]` | **Target.** Delete the file, or defer and document **disable-only** if delete is too sharp for v1. |
+
+**Why:** Ingest depends on sources; validated `add` lets OpenClaw chat drive new feeds without hand-written TOML.
+
+#### Extend `findmejobs ranking set`
+
+Keep current scalar flags. Add validated operations for lists, weights, and `title_families` (backed by `RankingConfigDraft` / `RankingWeights`):
+
+| Addition | Example shape |
+|----------|----------------|
+| Weights | `--weight-title-alignment 25` (one flag per `RankingWeights` field) |
+| String lists | `--add-blocked-company`, `--remove-blocked-company`; same pattern for `blocked_title_keywords`, `allowed_companies`, `preferred_companies`, `preferred_timezones` |
+| `title_families` | `--title-family-add <family> --pattern "..."` (repeatable); `--title-family-remove` / `--title-family-clear <family>` |
+
+#### `findmejobs profile set` (new command)
+
+Canonical `config/profile.yaml`, validated as `ProfileConfig`:
+
+| Pattern | Fields |
+|--------|--------|
+| Scalars | `--full-name`, `--headline`, `--email`, and other string/int fields aligned with `ProfileConfig` |
+| Lists | `--add-target-title` / `--remove-target-title`; same for skills, locations, `allowed_countries`, `strengths`, etc. |
+| Optional batch replace | `--set-target-titles-json '[...]'` with **documented replace-entire-list** semantics (for OpenClaw batch updates) |
+
+**Guardrails:** `target_titles` is required—do not allow empty without an explicit escape hatch. Emit a short post-write summary or diff hint.
+
+### Tier 2 — `app.toml` without secrets
+
+#### `findmejobs app set` (narrow)
+
+Non-secret operational fields from `AppConfig` only, e.g.:
+
+- `logging.level`
+- `http.timeout_seconds`, `http.max_attempts`, `http.user_agent`
+- `delivery.daily_hour`, `delivery.digest_max_items`
+- `delivery.email.enabled`, host, port, username, sender, recipient, `use_tls` (password via env only)
+
+**Defer or warn heavily:** changing `storage.*` paths (breaks DB/raw layout expectations).
+
+### Tier 3 — convenience
+
+| Command | Purpose |
+|--------|---------|
+| `findmejobs config init` | Copy from `config/examples/` when files are missing (today’s manual `cp` ritual). |
+| `findmejobs config validate` | Config-load checks without full `doctor` / DB work (optional split). |
+
+### Explicit non-goals
+
+- Arbitrary TOML/YAML patch (`yq`-style) that bypasses models.
+- LLM-driven or non-deterministic ranking changes.
+- Defining **new** adapter `kind` values without code—CLI configures only kinds the app already implements.
+
+### Suggested implementation order
+
+1. `sources list`, `sources add` (**done**); then `sources set` (enable + base scalars).
+2. Extend `ranking set` with list, weight, and `title_family` operations.
+3. `profile set` (add/remove lists + key scalars).
+4. `app set` (non-secret only) + documented env-based secrets.
+5. `config init` when onboarding polish matters.
+
+### Testing expectations
+
+- Temp dir fixtures: run command → reload via existing loaders (`load_source_configs`, `load_profile_config`, ranking load/patch).
+- Failure cases: duplicate source `name`, invalid `kind`, bad URL, empty `target_titles`, invalid JSON on optional replace flags.
 
 ---
 
@@ -463,6 +585,7 @@ If you are an AI coding agent working in this repo:
 - read this file first
 - stay within **Available features** unless the operator explicitly approves **What’s coming / deferred**
 - do not treat OpenClaw as the raw scraper
+- for new sources: use **`sources add`** when `kind` already exists; if a new `kind` is needed, follow **[Adding sources (existing `kind` vs new adapter)](#adding-sources-existing-kind-vs-new-adapter)** (implement adapter in Python, then config via CLI)—never substitute chat scraping for `ingestion`
 - do not invent unsupported user preferences
 - do not make ranking depend on LLM output
 - do not widen scope silently

@@ -1,6 +1,7 @@
 README.md
 pyproject.toml
 src/findmejobs/__init__.py
+src/findmejobs/__main__.py
 src/findmejobs/feedback.py
 src/findmejobs.egg-info/PKG-INFO
 src/findmejobs.egg-info/SOURCES.txt
@@ -18,6 +19,7 @@ src/findmejobs/cli/app.py
 src/findmejobs/config/__init__.py
 src/findmejobs/config/loader.py
 src/findmejobs/config/models.py
+src/findmejobs/config/source_file.py
 src/findmejobs/db/__init__.py
 src/findmejobs/db/base.py
 src/findmejobs/db/models.py
@@ -49,13 +51,16 @@ src/findmejobs/ingestion/adapters/kalibrr.py
 src/findmejobs/ingestion/adapters/lever.py
 src/findmejobs/ingestion/adapters/rss.py
 src/findmejobs/ingestion/adapters/smartrecruiters.py
+src/findmejobs/ingestion/adapters/workable.py
 src/findmejobs/normalization/__init__.py
 src/findmejobs/normalization/canonicalize.py
 src/findmejobs/observability/__init__.py
 src/findmejobs/observability/doctor.py
+src/findmejobs/observability/job_listing.py
 src/findmejobs/observability/logging.py
 src/findmejobs/observability/reporting.py
 src/findmejobs/profile_bootstrap/__init__.py
+src/findmejobs/profile_bootstrap/baseline.py
 src/findmejobs/profile_bootstrap/diff.py
 src/findmejobs/profile_bootstrap/extractor.py
 src/findmejobs/profile_bootstrap/models.py
@@ -67,8 +72,10 @@ src/findmejobs/profile_bootstrap/service.py
 src/findmejobs/profile_bootstrap/validators.py
 src/findmejobs/ranking/__init__.py
 src/findmejobs/ranking/engine.py
+src/findmejobs/ranking/explain.py
 src/findmejobs/ranking/hard_filters.py
 src/findmejobs/ranking/signals.py
+src/findmejobs/ranking/yaml_patch.py
 src/findmejobs/review/__init__.py
 src/findmejobs/review/client.py
 src/findmejobs/review/importer.py

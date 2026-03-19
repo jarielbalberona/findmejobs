@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from findmejobs.db.models import JobCluster, JobClusterMember, NormalizedJob, Source, SourceJob
 from findmejobs.dedupe.matcher import find_cluster_for_job
 from findmejobs.utils.hashing import sha256_hexdigest
-from findmejobs.utils.time import utcnow
+from findmejobs.utils.time import ensure_utc, utcnow
 
 
 def assign_job_cluster(session: Session, job: NormalizedJob, id_factory) -> tuple[JobCluster, bool]:
@@ -77,7 +77,7 @@ def choose_representative_job(session: Session, cluster: JobCluster, candidate: 
     return best.id
 
 
-def _representative_sort_key(session: Session, job: NormalizedJob) -> tuple[float, int, int, int, object]:
+def _representative_sort_key(session: Session, job: NormalizedJob) -> tuple[float, int, int, int, float]:
     source = session.execute(
         select(Source)
         .join(SourceJob, SourceJob.source_id == Source.id)
@@ -86,10 +86,13 @@ def _representative_sort_key(session: Session, job: NormalizedJob) -> tuple[floa
     ).scalar_one_or_none()
     trust_weight = source.trust_weight if source is not None else 1.0
     priority = source.priority if source is not None else 0
+    # Use a numeric key so SQLite-loaded naive datetimes never get compared to
+    # in-memory timezone-aware values (TypeError in sorted()).
+    last_seen_ts = ensure_utc(job.last_seen_at).timestamp()
     return (
         trust_weight,
         priority,
         1 if job.salary_max or job.salary_min else 0,
         len(job.description_text or ""),
-        job.last_seen_at,
+        last_seen_ts,
     )

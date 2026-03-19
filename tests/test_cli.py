@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 from pathlib import Path
 
@@ -7,10 +8,11 @@ import httpx
 from sqlalchemy import func, select
 
 from findmejobs.cli.app import app
-from findmejobs.config.loader import load_app_config, load_profile_config
+from findmejobs.config.loader import load_app_config, load_profile_config, load_source_configs
 from findmejobs.db.models import JobCluster, JobScore, NormalizedJob, PipelineRun, Profile, RankModel, RawDocument, Source, SourceFetchRun, SourceJob
 from findmejobs.db.session import create_session_factory
 from findmejobs.utils.time import utcnow
+from findmejobs.utils.yamlio import load_yaml
 
 
 class FakeHttpClient:
@@ -340,6 +342,216 @@ def test_rank_command_only_scores_valid_jobs(
         assert session.scalar(select(func.count()).select_from(JobScore)) == 1
 
 
+def test_jobs_list_shows_eligible_ranked_jobs(
+    cli_runner,
+    migrated_runtime_config_files: tuple[Path, Path, Path],
+) -> None:
+    app_path, profile_path, sources_dir = migrated_runtime_config_files
+    app_config = load_app_config(app_path)
+    session_factory = create_session_factory(app_config.database.url)
+    with session_factory() as session:
+        _seed_cluster(
+            session,
+            source_id="source-valid",
+            source_name="valid",
+            source_job_key="job-valid",
+            normalized_job_id="job-valid",
+            cluster_id="cluster-valid",
+            title="Backend Engineer",
+            company="Example",
+            location_text="Remote, Philippines",
+            location_type="remote",
+            description_text="Python SQL",
+            normalization_status="valid",
+        )
+        session.commit()
+
+    assert (
+        cli_runner.invoke(
+            app,
+            ["rank", "--app-config-path", str(app_path), "--profile-path", str(profile_path), "--sources-dir", str(sources_dir)],
+        ).exit_code
+        == 0
+    )
+
+    result = cli_runner.invoke(
+        app,
+        [
+            "jobs",
+            "list",
+            "--app-config-path",
+            str(app_path),
+            "--profile-path",
+            str(profile_path),
+            "--sources-dir",
+            str(sources_dir),
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Backend Engineer" in result.stdout
+    assert "job-valid" in result.stdout
+    assert "matched_signals:" in result.stdout
+    assert "tags:" in result.stdout
+
+
+def test_jobs_list_json_mode(
+    cli_runner,
+    migrated_runtime_config_files: tuple[Path, Path, Path],
+) -> None:
+    app_path, profile_path, sources_dir = migrated_runtime_config_files
+    app_config = load_app_config(app_path)
+    session_factory = create_session_factory(app_config.database.url)
+    with session_factory() as session:
+        _seed_cluster(
+            session,
+            source_id="source-valid",
+            source_name="valid",
+            source_job_key="job-valid",
+            normalized_job_id="job-valid",
+            cluster_id="cluster-valid",
+            title="Backend Engineer",
+            company="Example",
+            location_text="Remote, Philippines",
+            location_type="remote",
+            description_text="Python SQL",
+            normalization_status="valid",
+        )
+        session.commit()
+
+    cli_runner.invoke(
+        app,
+        ["rank", "--app-config-path", str(app_path), "--profile-path", str(profile_path), "--sources-dir", str(sources_dir)],
+    )
+    result = cli_runner.invoke(
+        app,
+        [
+            "jobs",
+            "list",
+            "--json",
+            "--app-config-path",
+            str(app_path),
+            "--profile-path",
+            str(profile_path),
+            "--sources-dir",
+            str(sources_dir),
+        ],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["meta"]["filter"] == "review_eligible"
+    assert payload["meta"]["hint"] is None  # non-empty result: no empty-state hint
+    assert len(payload["jobs"]) == 1
+    assert payload["jobs"][0]["job_id"] == "job-valid"
+    assert payload["jobs"][0]["status"] == "eligible"
+
+
+def test_jobs_list_all_scored_includes_hard_filtered(
+    cli_runner,
+    migrated_runtime_config_files: tuple[Path, Path, Path],
+) -> None:
+    app_path, profile_path, sources_dir = migrated_runtime_config_files
+    app_config = load_app_config(app_path)
+    session_factory = create_session_factory(app_config.database.url)
+    with session_factory() as session:
+        _seed_cluster(
+            session,
+            source_id="source-onsite",
+            source_name="src",
+            source_job_key="job-onsite",
+            normalized_job_id="job-onsite",
+            cluster_id="cluster-onsite",
+            title="Backend Engineer",
+            company="Example",
+            location_text="San Francisco, CA",
+            location_type="onsite",
+            description_text="Python SQL",
+            normalization_status="valid",
+        )
+        session.commit()
+
+    assert (
+        cli_runner.invoke(
+            app,
+            ["rank", "--app-config-path", str(app_path), "--profile-path", str(profile_path), "--sources-dir", str(sources_dir)],
+        ).exit_code
+        == 0
+    )
+
+    json_default = cli_runner.invoke(
+        app,
+        [
+            "jobs",
+            "list",
+            "--json",
+            "--app-config-path",
+            str(app_path),
+            "--profile-path",
+            str(profile_path),
+            "--sources-dir",
+            str(sources_dir),
+        ],
+    )
+    assert json_default.exit_code == 0
+    jd = json.loads(json_default.stdout)
+    assert jd["jobs"] == []
+    assert jd["meta"]["hint"] is not None
+
+    empty = cli_runner.invoke(
+        app,
+        [
+            "jobs",
+            "list",
+            "--app-config-path",
+            str(app_path),
+            "--profile-path",
+            str(profile_path),
+            "--sources-dir",
+            str(sources_dir),
+        ],
+    )
+    assert empty.exit_code == 0
+    assert "No jobs matched" in empty.stdout
+
+    all_scored = cli_runner.invoke(
+        app,
+        [
+            "jobs",
+            "list",
+            "--all-scored",
+            "--app-config-path",
+            str(app_path),
+            "--profile-path",
+            str(profile_path),
+            "--sources-dir",
+            str(sources_dir),
+        ],
+    )
+    assert all_scored.exit_code == 0
+    assert "hard_filtered" in all_scored.stdout
+    assert "not_remote" in all_scored.stdout
+
+    json_all = cli_runner.invoke(
+        app,
+        [
+            "jobs",
+            "list",
+            "--all-scored",
+            "--json",
+            "--app-config-path",
+            str(app_path),
+            "--profile-path",
+            str(profile_path),
+            "--sources-dir",
+            str(sources_dir),
+        ],
+    )
+    assert json_all.exit_code == 0
+    pj = json.loads(json_all.stdout)
+    assert pj["meta"]["filter"] == "all_scored"
+    assert pj["meta"]["hint"] is None
+    assert len(pj["jobs"]) >= 1
+
+
 def test_rank_command_prints_hard_filter_reason_summary(
     cli_runner,
     migrated_runtime_config_files: tuple[Path, Path, Path],
@@ -461,11 +673,87 @@ def test_review_command_only_exports_sanitized_packets(
 
 
 def test_cli_command_groups_show_help_when_no_subcommand(cli_runner) -> None:
-    for group in ("review", "profile", "digest", "feedback", "reprocess"):
+    for group in ("review", "profile", "ranking", "digest", "feedback", "reprocess", "jobs", "sources"):
         result = cli_runner.invoke(app, [group])
         assert result.exit_code == 0
         out = result.stdout + result.stderr
         assert "Usage" in out
+
+
+def _write_minimal_yaml_profile_pair(tmp_path: Path) -> Path:
+    profile_path = tmp_path / "profile.yaml"
+    ranking_path = tmp_path / "ranking.yaml"
+    profile_path.write_text(
+        "\n".join(
+            [
+                "version: cli-ranking-test",
+                "target_titles:",
+                "  - Backend Engineer",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    ranking_path.write_text(
+        "\n".join(
+            [
+                "rank_model_version: bootstrap-v1",
+                "stale_days: 30",
+                "minimum_score: 45.0",
+                "weights:",
+                "  title_alignment: 30.0",
+                "  title_family: 10.0",
+                "  must_have_skills: 35.0",
+                "  preferred_skills: 10.0",
+                "  location_fit: 10.0",
+                "  remote_fit: 10.0",
+                "  recency: 5.0",
+                "  company_preference: 5.0",
+                "  timezone_fit: 5.0",
+                "  source_trust: 5.0",
+                "  feedback_signal: 5.0",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return profile_path
+
+
+def test_ranking_explain_json_includes_catalog(tmp_path: Path, cli_runner) -> None:
+    profile_path = _write_minimal_yaml_profile_pair(tmp_path)
+    result = cli_runner.invoke(app, ["ranking", "explain", "--json", "--profile-path", str(profile_path)])
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["rank_model_version"] == "bootstrap-v1"
+    assert any(r["reason"] == "blocked_company" for r in data["hard_filter_rules"])
+    assert any(c["component"] == "title_alignment" for c in data["score_components"])
+    assert data["ranking_policy"]["minimum_score"] == 45.0
+
+
+def test_ranking_set_updates_stale_days(tmp_path: Path, cli_runner) -> None:
+    profile_path = _write_minimal_yaml_profile_pair(tmp_path)
+    ranking_path = profile_path.with_name("ranking.yaml")
+    result = cli_runner.invoke(
+        app,
+        ["ranking", "set", "--profile-path", str(profile_path), "--stale-days", "99"],
+    )
+    assert result.exit_code == 0
+    assert load_yaml(ranking_path)["stale_days"] == 99
+
+
+def test_ranking_set_requires_at_least_one_field(tmp_path: Path, cli_runner) -> None:
+    profile_path = _write_minimal_yaml_profile_pair(tmp_path)
+    result = cli_runner.invoke(app, ["ranking", "set", "--profile-path", str(profile_path)])
+    assert result.exit_code == 1
+
+
+def test_ranking_explain_fails_without_ranking_yaml(tmp_path: Path, cli_runner) -> None:
+    profile_path = tmp_path / "profile.yaml"
+    profile_path.write_text("version: x\ntarget_titles:\n  - T\n", encoding="utf-8")
+    result = cli_runner.invoke(app, ["ranking", "explain", "--profile-path", str(profile_path)])
+    assert result.exit_code == 1
+    assert "missing" in result.stdout
 
 
 def test_review_import_alias_matches_import_results(
@@ -561,3 +849,69 @@ def test_doctor_command_reports_stale_pipeline_and_repeated_source_failures(
     assert result.exit_code == 1
     assert "pipeline_stale" in result.stdout
     assert "source_repeated_failures:rss-source" in result.stdout
+
+
+def test_sources_add_writes_valid_toml(tmp_path: Path, cli_runner) -> None:
+    sources_dir = tmp_path / "sources.d"
+    payload = json.dumps(
+        {
+            "name": "test-rss",
+            "kind": "rss",
+            "enabled": False,
+            "feed_url": "https://example.com/feed.xml",
+        }
+    )
+    result = cli_runner.invoke(
+        app,
+        ["sources", "add", "--sources-dir", str(sources_dir), "--json", payload],
+    )
+    assert result.exit_code == 0
+    out = result.stdout + result.stderr
+    assert "wrote" in out
+    out_file = sources_dir / "test-rss.toml"
+    assert out_file.exists()
+    configs = load_source_configs(sources_dir)
+    assert len(configs) == 1
+    assert configs[0].name == "test-rss"
+    assert configs[0].kind == "rss"
+    assert configs[0].enabled is False
+
+
+def test_sources_add_rejects_duplicate_name(tmp_path: Path, cli_runner) -> None:
+    sources_dir = tmp_path / "sources.d"
+    sources_dir.mkdir()
+    (sources_dir / "a.toml").write_text(
+        'name = "dup"\nkind = "rss"\nfeed_url = "https://a.com/jobs.xml"\n',
+        encoding="utf-8",
+    )
+    payload = json.dumps({"name": "dup", "kind": "rss", "feed_url": "https://b.com/jobs.xml"})
+    result = cli_runner.invoke(
+        app,
+        ["sources", "add", "--sources-dir", str(sources_dir), "--json", payload],
+    )
+    assert result.exit_code == 1
+    out = result.stdout + result.stderr
+    assert "already defined" in out
+
+
+def test_sources_list_json(tmp_path: Path, cli_runner) -> None:
+    sources_dir = tmp_path / "sources.d"
+    sources_dir.mkdir()
+    (sources_dir / "x.toml").write_text(
+        'name = "x"\nkind = "rss"\nenabled = true\nfeed_url = "https://x.com/jobs.xml"\n',
+        encoding="utf-8",
+    )
+    result = cli_runner.invoke(app, ["sources", "list", "--sources-dir", str(sources_dir), "--json"])
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert len(data) == 1
+    assert data[0]["name"] == "x"
+    assert data[0]["kind"] == "rss"
+    assert "path" in data[0]
+
+
+def test_sources_add_requires_json_xor_file(tmp_path: Path, cli_runner) -> None:
+    sources_dir = tmp_path / "sources.d"
+    result = cli_runner.invoke(app, ["sources", "add", "--sources-dir", str(sources_dir)])
+    assert result.exit_code == 1
+    assert "exactly one" in (result.stdout + result.stderr).lower()

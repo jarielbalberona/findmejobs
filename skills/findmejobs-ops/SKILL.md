@@ -43,12 +43,13 @@ When the user asks to scan jobs, check health first, then run the real CLI flow,
 When the user asks for a routine scan, use this default sequence:
 
 1. Run `doctor`.
-2. Run `ingest`.
-3. Run `rank`.
-4. Run `review export`.
-5. If the user asked to import completed review results, run `review import-results`.
-6. If the user explicitly asked to send or resend a digest, run the appropriate `digest` subcommand.
-7. Run `report` when a rollup is useful.
+2. If the user asked to add a feed/source, run `sources add` with a validated JSON object (see `findmejobs sources add --help`) or `sources list` to confirm current sources.
+3. Run `ingest`.
+4. Run `rank`.
+5. Run `review export`.
+6. If the user asked to import completed review results, run `review import-results`.
+7. If the user explicitly asked to send or resend a digest, run the appropriate `digest` subcommand.
+8. Run `report` when a rollup is useful.
 
 When the user asks for a narrower action, run only the relevant command instead of the full flow.
 
@@ -89,6 +90,8 @@ Common commands:
 
 ```bash
 findmejobs doctor
+findmejobs sources list
+findmejobs sources add --json '<one JSON SourceConfig object>'   # or --json-file path
 findmejobs ingest
 findmejobs rank
 findmejobs review export
@@ -117,6 +120,8 @@ findmejobs regenerate-application --job-id <id>
 ```
 
 If the user runs only a command group like `digest` or `review`, expect help output unless they specify a subcommand.
+
+If the operator asks for a source whose **`kind` is not implemented** in the app, `sources add` cannot fix that alone: follow **`AGENTS.md` → Adding sources (existing `kind` vs new adapter)**—implement the adapter in this Python repo (tests, orchestrator wiring), then use `sources add`. Do not use OpenClaw to scrape job pages as a substitute for that work.
 
 ## Response Contract
 

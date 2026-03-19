@@ -10,6 +10,8 @@ Built with Python 3.12, SQLite, SQLAlchemy, Pydantic, and Typer.
 
 Contributor rules and source-adapter guidance live in `AGENTS.md` and `CONTRIBUTING.md`.
 
+For the **planned** validated-config CLI surface (sources, profile/ranking beyond today’s commands, optional `app set`), see [Minimal CLI surface (target)](AGENTS.md#minimal-cli-surface-target) in `AGENTS.md`.
+
 ## Start here
 
 The easiest way to bootstrap a usable profile is to import a real resume file.
@@ -133,14 +135,26 @@ Useful variants:
 findmejobs ingest --source greenhouse
 findmejobs digest send --dry-run
 findmejobs digest resend --digest-date 2026-03-19
+findmejobs ranking explain
+findmejobs ranking set --minimum-score 40 --stale-days 45
+findmejobs jobs list
+findmejobs jobs list --all-scored --limit 100
+findmejobs jobs list --json | jq '.jobs[:5]'
+findmejobs sources list --json
+findmejobs sources add --json '{"name":"my-feed","kind":"rss","feed_url":"https://example.com/jobs.rss"}'
 ```
 
 ## Core commands
 
 - `findmejobs doctor` — validate config, DB, and runtime paths
 - `findmejobs ingest [--source <name-or-kind>]` — fetch, store raw payloads, normalize, dedupe
+- `findmejobs sources list` — show validated sources under `config/sources.d/` (`--json` for machine-readable)
+- `findmejobs sources add` — validate a single JSON object as a source (`--json` or `--json-file`), write one TOML file (OpenClaw-friendly; no hand-edited TOML required when `kind` is already supported). If you need a **new** `kind`/adapter, implement it in Python first—see [AGENTS.md — Adding sources](AGENTS.md#adding-sources-existing-kind-vs-new-adapter).
 - `findmejobs rank` — apply deterministic ranking
 - `findmejobs rerank` — alias for `rank`
+- `findmejobs ranking explain` — show hard-filter reason codes → config keys, score components → weights, and the effective `ranking.yaml` policy (use `--json` for machine-readable)
+- `findmejobs ranking set` — patch scalar fields in `config/ranking.yaml` (e.g. `--minimum-score`, `--stale-days`, `--require-remote` / `--no-require-remote`); lists and `title_families` still require editing the file
+- `findmejobs jobs list` — print ranked job previews (title, score, tags, matched signals, description snippet); add `--all-scored` for hard-filtered / below-threshold rows, `--json` for machine-readable output (same filters as text—combine `--json` with `--all-scored` when you want every scored row)
 - `findmejobs report` — print operational summary
 - `findmejobs review export` — write sanitized review packets
 - `findmejobs review import` — import review results
@@ -159,9 +173,20 @@ For the rest:
 ```bash
 findmejobs --help
 findmejobs profile --help
+findmejobs ranking --help
+findmejobs jobs --help
 findmejobs review --help
 findmejobs digest --help
+findmejobs sources --help
 ```
+
+## Ranking configuration
+
+Hard filters (drop jobs before scoring) are implemented in `src/findmejobs/ranking/hard_filters.py` and driven mainly by **`config/ranking.yaml`** plus **`config/profile.yaml`** (e.g. `allowed_countries`, `target_titles`, skills). Reasons are stored on each run in `job_scores.hard_filter_reasons_json`.
+
+Soft scoring (the factors that become `matched_signals` when weighted points > 0) are assembled in `src/findmejobs/ranking/engine.py` from `src/findmejobs/ranking/signals.py`, with per-signal weights in `ranking.yaml` under `weights`.
+
+Individual rules are not toggled on/off in config today: each check is always evaluated, but you can **disable the effect** by clearing the underlying lists / thresholds (e.g. empty `blocked_companies`, `require_remote: false`, or a very large `stale_days`). Use `findmejobs ranking explain` to see the mapping from reason codes and component names to config.
 
 ## Trust boundary
 

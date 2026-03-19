@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from findmejobs.db.models import JobCluster, JobClusterMember, NormalizedJob, RawDocument, Source, SourceFetchRun, SourceJob
 from findmejobs.dedupe.clustering import assign_job_cluster
@@ -140,3 +140,43 @@ def test_unrelated_jobs_do_not_false_positive_into_same_cluster(session_factory)
         cluster_b, _ = assign_job_cluster(session, job_b, new_id)
         session.commit()
         assert cluster_a.id != cluster_b.id
+
+
+def test_cluster_merge_does_not_fail_when_last_seen_mixes_naive_and_aware(session_factory) -> None:
+    """Regression: choose_representative_job sorted() compared naive vs aware datetimes."""
+    now = utcnow()
+    canonical = "https://jobs.example.test/dedupe-mixed-tz/1"
+    with session_factory() as session:
+        job_a = _make_normalized_job(
+            session,
+            source_id="source-a",
+            source_job_key="a",
+            source_url="https://mirror-a.test/jobs/1",
+            canonical_url=canonical,
+            company="Example",
+            title="Backend Engineer",
+            location="Remote, Philippines",
+            now=now,
+        )
+        assign_job_cluster(session, job_a, new_id)
+        session.commit()
+        session.execute(
+            text("UPDATE normalized_jobs SET last_seen_at = :v WHERE id = :id"),
+            {"v": "2020-01-01 12:00:00.000000", "id": job_a.id},
+        )
+        session.commit()
+
+        job_b = _make_normalized_job(
+            session,
+            source_id="source-b",
+            source_job_key="b",
+            source_url="https://mirror-b.test/jobs/1",
+            canonical_url=canonical,
+            company="Example",
+            title="Backend Engineer",
+            location="Remote, Philippines",
+            now=now,
+        )
+        _cluster, merged = assign_job_cluster(session, job_b, new_id)
+        session.commit()
+        assert merged is True

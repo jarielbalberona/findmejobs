@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import tomllib
 from collections import Counter
 from pathlib import Path
 from typing import Annotated
@@ -14,6 +15,13 @@ from sqlalchemy import select
 from findmejobs.application.service import ApplicationDraftService
 from findmejobs.config.loader import ensure_directories, load_app_config, load_profile_config, load_source_configs, resolve_profile_config_path
 from findmejobs.config.models import SourceConfig
+from findmejobs.config.source_file import (
+    find_toml_path_for_source_name,
+    iter_validated_source_files,
+    parse_source_json_payload,
+    resolve_output_path,
+    write_source_toml,
+)
 from findmejobs.db.models import Digest, JobCluster, JobScore, NormalizedJob, Source, SourceJob
 from findmejobs.db.repositories import (
     create_job_feedback,
@@ -31,10 +39,13 @@ from findmejobs.feedback import ALLOWED_FEEDBACK_TYPES, feedback_types_for_job, 
 from findmejobs.ingestion.orchestrator import run_ingest
 from findmejobs.normalization.canonicalize import normalize_job
 from findmejobs.observability.doctor import check_profile_config_health, run_doctor
+from findmejobs.observability.job_listing import fetch_job_previews, format_job_previews_text
 from findmejobs.observability.logging import configure_logging
 from findmejobs.observability.reporting import build_report
 from findmejobs.profile_bootstrap.service import ProfileBootstrapService
 from findmejobs.ranking.engine import rank_job_with_feedback
+from findmejobs.ranking.explain import build_ranking_explain_payload, format_ranking_explain_text
+from findmejobs.ranking.yaml_patch import patch_ranking_yaml
 from findmejobs.review.service import export_review_packets, import_review_packets
 from findmejobs.utils.ids import new_id
 from findmejobs.utils.locking import FileLock
@@ -43,18 +54,24 @@ from findmejobs.utils.time import utcnow
 app = typer.Typer(
     help="Single-host job intelligence CLI. Typical flow: ingest → rank → review export → digest send.",
     no_args_is_help=True,
-    epilog="Command groups: review, profile, digest, feedback, reprocess — use e.g. `review --help`.",
+    epilog="Command groups: review, profile, ranking, digest, feedback, reprocess, jobs, sources — use e.g. `review --help`.",
 )
 review_app = typer.Typer(help="Sanitized review packets (export to outbox, import results from inbox)")
 profile_app = typer.Typer(help="Profile bootstrap from resume → draft → promote")
 digest_app = typer.Typer(help="Email digest send / resend")
 feedback_app = typer.Typer(help="Operator feedback on jobs/clusters")
 reprocess_app = typer.Typer(help="Re-run normalization or review packet rebuilds")
+ranking_app = typer.Typer(help="Inspect or adjust deterministic ranking (config/ranking.yaml)")
+jobs_app = typer.Typer(help="Inspect stored jobs (ranked previews for the current profile)")
+sources_app = typer.Typer(help="Add or list validated `config/sources.d/*.toml` definitions")
 app.add_typer(review_app, name="review")
 app.add_typer(profile_app, name="profile")
 app.add_typer(digest_app, name="digest")
 app.add_typer(feedback_app, name="feedback")
 app.add_typer(reprocess_app, name="reprocess")
+app.add_typer(ranking_app, name="ranking")
+app.add_typer(jobs_app, name="jobs")
+app.add_typer(sources_app, name="sources")
 
 
 def _typer_group_show_help_callback(ctx: Context) -> None:
@@ -68,6 +85,9 @@ profile_app.callback(invoke_without_command=True)(_typer_group_show_help_callbac
 digest_app.callback(invoke_without_command=True)(_typer_group_show_help_callback)
 feedback_app.callback(invoke_without_command=True)(_typer_group_show_help_callback)
 reprocess_app.callback(invoke_without_command=True)(_typer_group_show_help_callback)
+ranking_app.callback(invoke_without_command=True)(_typer_group_show_help_callback)
+jobs_app.callback(invoke_without_command=True)(_typer_group_show_help_callback)
+sources_app.callback(invoke_without_command=True)(_typer_group_show_help_callback)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -481,6 +501,144 @@ def report(
     typer.echo(json.dumps(report_payload, indent=2))
 
 
+@jobs_app.command("list")
+def jobs_list(
+    app_config_path: Path = typer.Option(Path("config/app.toml"), exists=True),
+    profile_path: Path = typer.Option(Path("config/profile.toml")),
+    sources_dir: Path = typer.Option(Path("config/sources.d"), exists=True, file_okay=False),
+    all_scored: bool = typer.Option(
+        False,
+        "--all-scored",
+        help="Include hard-filtered and below-minimum-score rows (still for the current profile/rank model).",
+    ),
+    limit: int = typer.Option(50, "--limit", min=1, max=500),
+    snippet_length: int = typer.Option(160, "--snippet-length", min=20, max=2000),
+    json_out: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit JSON (same row set as plain text). Use with --all-scored to include hard-filtered / below-minimum rows.",
+    ),
+) -> None:
+    """Print a short preview of ranked jobs (title, score, tags, signals, description snippet).
+
+    Default rows match review export eligibility (passed hard filters, score ≥ ranking.minimum_score).
+    Run `findmejobs rank` first so scores exist for the current profile.
+    """
+    _app_config, profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_dir)
+    with session_factory() as session:
+        previews = fetch_job_previews(
+            session,
+            profile,
+            all_scored=all_scored,
+            limit=limit,
+            snippet_length=snippet_length,
+        )
+    if json_out:
+        payload = {
+            "meta": {
+                "filter": "all_scored" if all_scored else "review_eligible",
+                "hint": (
+                    None
+                    if all_scored or previews
+                    else "Only passed hard filters and score ≥ ranking.minimum_score. "
+                    "Pass --all-scored to include hard_filtered and below_threshold rows in JSON/text."
+                ),
+            },
+            "jobs": [p.to_json_dict() for p in previews],
+        }
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        typer.echo(format_job_previews_text(previews), nl=False)
+
+
+@ranking_app.command("explain")
+def ranking_explain(
+    profile_path: Path = typer.Option(Path("config/profile.toml")),
+    json_out: bool = typer.Option(False, "--json", help="Emit structured JSON (includes effective policy + catalogs)."),
+) -> None:
+    """Show how hard filters and score components map to config; dump effective ranking policy."""
+    try:
+        resolved = resolve_profile_config_path(profile_path)
+    except FileNotFoundError as exc:
+        typer.echo(f"ranking explain failed: {exc}")
+        raise typer.Exit(code=1)
+    ranking_path = resolved.with_name("ranking.yaml")
+    if not ranking_path.exists():
+        typer.echo(f"ranking explain failed: missing {ranking_path}")
+        raise typer.Exit(code=1)
+    try:
+        profile = load_profile_config(profile_path)
+    except (FileNotFoundError, ValidationError, ValueError) as exc:
+        typer.echo(f"ranking explain failed: {exc}")
+        raise typer.Exit(code=1)
+    payload = build_ranking_explain_payload(
+        profile,
+        profile_path=str(resolved),
+        ranking_path=str(ranking_path),
+    )
+    if json_out:
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        typer.echo(format_ranking_explain_text(payload), nl=False)
+
+
+@ranking_app.command("set")
+def ranking_set(
+    profile_path: Path = typer.Option(Path("config/profile.toml")),
+    stale_days: int | None = typer.Option(None, min=1, help="ranking.stale_days"),
+    minimum_score: float | None = typer.Option(None, help="Minimum total score for review export eligibility."),
+    minimum_salary: int | None = typer.Option(None, min=0, help="Salary floor (job.salary_max must clear it when present)."),
+    clear_minimum_salary: bool = typer.Option(False, help="Set minimum_salary to null in ranking.yaml."),
+    rank_model_version: str | None = typer.Option(None, help="Bump when you change weights/rules and need fresh scores."),
+    require_remote: bool | None = typer.Option(
+        None,
+        "--require-remote/--no-require-remote",
+        help="Hard-filter non-remote jobs when --require-remote; omit both flags to leave unchanged.",
+    ),
+    remote_first: bool | None = typer.Option(
+        None,
+        "--remote-first/--no-remote-first",
+        help="Soft signal (weights); omit both flags to leave unchanged.",
+    ),
+) -> None:
+    """Patch scalar fields in config/ranking.yaml (validated). Lists/title_families still require editing the file."""
+    resolved = resolve_profile_config_path(profile_path)
+    ranking_path = resolved.with_name("ranking.yaml")
+    if not ranking_path.exists():
+        typer.echo(f"ranking set failed: missing {ranking_path}")
+        raise typer.Exit(code=1)
+    if clear_minimum_salary and minimum_salary is not None:
+        typer.echo("ranking set failed: use either --clear-minimum-salary or --minimum-salary, not both")
+        raise typer.Exit(code=1)
+    any_patch = (
+        stale_days is not None
+        or minimum_score is not None
+        or minimum_salary is not None
+        or clear_minimum_salary
+        or rank_model_version is not None
+        or require_remote is not None
+        or remote_first is not None
+    )
+    if not any_patch:
+        typer.echo("ranking set: pass at least one option (see findmejobs ranking set --help)")
+        raise typer.Exit(code=1)
+    try:
+        patch_ranking_yaml(
+            ranking_path,
+            stale_days=stale_days,
+            minimum_score=minimum_score,
+            minimum_salary=minimum_salary,
+            clear_minimum_salary=clear_minimum_salary,
+            rank_model_version=rank_model_version,
+            require_remote=require_remote,
+            remote_first=remote_first,
+        )
+    except ValidationError as exc:
+        typer.echo(f"ranking set failed: {exc}")
+        raise typer.Exit(code=1)
+    typer.echo(f"ranking set: wrote {ranking_path} (run `findmejobs rank` to refresh scores)")
+
+
 @app.command()
 def doctor(
     app_config_path: Path = typer.Option(Path("config/app.toml"), exists=True),
@@ -782,6 +940,105 @@ def profile_promote_draft(
         typer.echo(f"profile promote-draft failed: {exc}")
         raise typer.Exit(code=1)
     typer.echo(f"profile draft promoted: safe_updates={len(diff.safe_auto_updates)}")
+
+
+@sources_app.command("list")
+def sources_list(
+    sources_dir: Path = typer.Option(
+        Path("config/sources.d"),
+        "--sources-dir",
+        exists=False,
+        file_okay=False,
+        help="Directory containing source *.toml files",
+    ),
+    json_out: bool = typer.Option(False, "--json", help="Emit JSON (path + SourceConfig fields)"),
+) -> None:
+    """List validated sources under sources.d (fails if any *.toml is invalid)."""
+    if not sources_dir.exists():
+        typer.echo("sources list: directory does not exist (0 sources)")
+        return
+    if not sources_dir.is_dir():
+        typer.echo(f"sources list failed: not a directory: {sources_dir}", err=True)
+        raise typer.Exit(code=1)
+    try:
+        rows = list(iter_validated_source_files(sources_dir))
+    except (ValidationError, OSError, tomllib.TOMLDecodeError) as exc:
+        typer.echo(f"sources list failed: {exc}", err=True)
+        raise typer.Exit(code=1)
+    if json_out:
+        payload = [{"path": str(path.resolve()), **cfg.model_dump(mode="json")} for path, cfg in rows]
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    for path, cfg in rows:
+        typer.echo(f"{cfg.name}\t{cfg.kind}\tenabled={cfg.enabled}\t{path}")
+
+
+@sources_app.command("add")
+def sources_add(
+    sources_dir: Path = typer.Option(
+        Path("config/sources.d"),
+        "--sources-dir",
+        exists=False,
+        file_okay=False,
+        help="Directory for the new *.toml (created if missing)",
+    ),
+    json_body: str | None = typer.Option(
+        None,
+        "--json",
+        help='One JSON object matching SourceConfig, e.g. {"name":"acme","kind":"rss","feed_url":"https://example.com/jobs.xml"}',
+    ),
+    json_file: Path | None = typer.Option(
+        None,
+        "--json-file",
+        exists=True,
+        dir_okay=False,
+        help="Path to a JSON file containing one source object",
+    ),
+    output_stem: str | None = typer.Option(
+        None,
+        "--output-stem",
+        help="Output filename without .toml (default: slug from `name`)",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite the target file if it already exists",
+    ),
+) -> None:
+    """Add a source by validating JSON and writing a single TOML file (OpenClaw-friendly)."""
+    if (json_body is None) == (json_file is None):
+        typer.echo("sources add: pass exactly one of --json or --json-file", err=True)
+        raise typer.Exit(code=1)
+    raw = json_file.read_text(encoding="utf-8") if json_file is not None else json_body
+    assert raw is not None
+    try:
+        config = parse_source_json_payload(raw)
+    except ValueError as exc:
+        typer.echo(f"sources add failed: {exc}", err=True)
+        raise typer.Exit(code=1)
+    try:
+        out_path = resolve_output_path(sources_dir, config, output_stem=output_stem)
+    except ValueError as exc:
+        typer.echo(f"sources add failed: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    existing = find_toml_path_for_source_name(sources_dir, config.name)
+    if existing is not None and existing.resolve() != out_path.resolve():
+        typer.echo(
+            f"sources add failed: name {config.name!r} is already defined in {existing} "
+            f"(remove or rename that file, or use the same --output-stem to replace it)",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    if out_path.exists() and not force:
+        typer.echo(f"sources add failed: file exists {out_path} (use --force to overwrite)", err=True)
+        raise typer.Exit(code=1)
+    try:
+        write_source_toml(out_path, config)
+    except OSError as exc:
+        typer.echo(f"sources add failed: {exc}", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(f"sources add: wrote {out_path.resolve()}")
 
 
 def main() -> None:

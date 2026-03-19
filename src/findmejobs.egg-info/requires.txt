@@ -9,6 +9,7 @@ python-docx<2.0,>=1.1
 rapidfuzz<4.0,>=3.9
 SQLAlchemy<3.0,>=2.0
 tenacity<9.0,>=8.2
+tomli-w<2.0,>=1.0
 typer<1.0,>=0.12
 PyYAML<7.0,>=6.0
 

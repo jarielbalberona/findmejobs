@@ -1,21 +1,21 @@
 ---
-name: findmejobs_ops
+name: findmejobs
 description: Run the local findmejobs CLI from OpenClaw chat to scan jobs, rank them, stage sanitized review packets, inspect health, and summarize concrete results back into the current conversation.
 metadata: {"openclaw":{"os":["darwin","linux"]}}
 ---
 
-# findmejobs_ops
+# findmejobs
 
 Use this skill when the user wants OpenClaw to operate the local `findmejobs` job pipeline from chat and report the result back into the same conversation.
 
 This is a local operator skill. OpenClaw is the chat interface and execution layer. The Python app remains the system of record.
 
 Deterministic flow templates live under:
-- `skills/findmejobs-ops/flows/onboarding.md`
-- `skills/findmejobs-ops/flows/profile-bootstrap.md`
-- `skills/findmejobs-ops/flows/source-setup.md`
-- `skills/findmejobs-ops/flows/daily-ops.md`
-- `skills/findmejobs-ops/flows/troubleshoot.md`
+- `skills/findmejobs/flows/onboarding.md`
+- `skills/findmejobs/flows/profile-bootstrap.md`
+- `skills/findmejobs/flows/source-setup.md`
+- `skills/findmejobs/flows/daily-ops.md`
+- `skills/findmejobs/flows/troubleshoot.md`
 
 ## Purpose
 

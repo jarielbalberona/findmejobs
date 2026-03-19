@@ -10,13 +10,12 @@ Use this skill when the user wants OpenClaw to operate the local `findmejobs` jo
 
 This is a local operator skill. OpenClaw is the chat interface and execution layer. The Python app remains the system of record.
 
-Deterministic flow templates live next to this file under `flows/`:
-
-- `flows/onboarding.md`
-- `flows/profile-bootstrap.md`
-- `flows/source-setup.md`
-- `flows/daily-ops.md`
-- `flows/troubleshoot.md`
+Deterministic flow templates live under:
+- `skills/flows/onboarding.md`
+- `skills/flows/profile-bootstrap.md`
+- `skills/flows/source-setup.md`
+- `skills/flows/daily-ops.md`
+- `skills/flows/troubleshoot.md`
 
 ## Purpose
 

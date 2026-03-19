@@ -687,8 +687,9 @@ def test_smtp_sender_tracks_actual_attempt_count(monkeypatch) -> None:
     monkeypatch.setattr("findmejobs.delivery.email.smtplib.SMTP", FakeSMTP)
     monkeypatch.setattr("findmejobs.delivery.email.time.sleep", lambda _seconds: None)
 
+    example_app = Path(__file__).resolve().parents[1] / "config" / "examples" / "app.toml"
     sender = SMTPEmailSender(
-        load_app_config(Path("config/app.toml")).delivery.email.model_copy(
+        load_app_config(example_app).delivery.email.model_copy(
             update={"enabled": True, "host": "smtp.example.test", "sender": "from@example.test", "recipient": "to@example.test"}
         )
     )
@@ -711,8 +712,9 @@ def test_smtp_sender_raises_after_final_retry(monkeypatch) -> None:
     monkeypatch.setattr("findmejobs.delivery.email.smtplib.SMTP", FailingSMTP)
     monkeypatch.setattr("findmejobs.delivery.email.time.sleep", lambda _seconds: None)
 
+    example_app = Path(__file__).resolve().parents[1] / "config" / "examples" / "app.toml"
     sender = SMTPEmailSender(
-        load_app_config(Path("config/app.toml")).delivery.email.model_copy(
+        load_app_config(example_app).delivery.email.model_copy(
             update={"enabled": True, "host": "smtp.example.test", "sender": "from@example.test", "recipient": "to@example.test"}
         )
     )

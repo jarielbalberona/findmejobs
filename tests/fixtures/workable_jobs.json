@@ -1,0 +1,41 @@
+{
+  "name": "Example Hiring Inc",
+  "description": "Example hiring account",
+  "jobs": [
+    {
+      "id": "3c47ff",
+      "title": "Account Executive",
+      "full_title": "Account Executive - GB/09/AE",
+      "shortcode": "AE84C38EE2",
+      "code": "GB/09/AE",
+      "state": "published",
+      "department": "Account Executive",
+      "url": "https://example.workable.com/jobs/3949357",
+      "application_url": "https://example.workable.com/jobs/3949357/candidates/new",
+      "shortlink": "https://apply.workable.com/j/AE84C38EE2",
+      "location": {
+        "location_str": "London, United Kingdom",
+        "country": "United Kingdom",
+        "country_code": "GB",
+        "region": "England",
+        "region_code": "ENG",
+        "city": "London",
+        "zip_code": "2142",
+        "telecommuting": false,
+        "workplace_type": "on_site"
+      },
+      "salary": {
+        "salary_from": 60000,
+        "salary_to": 80000,
+        "salary_currency": "gbp"
+      },
+      "employment_type": "Full time",
+      "industry": "Software",
+      "function": "Sales",
+      "experience": "Mid-Level",
+      "education": "Bachelor's Degree",
+      "description": "<p>Own outbound sales motions.</p>",
+      "created_at": "2023-12-25T00:00:00Z"
+    }
+  ]
+}

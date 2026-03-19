@@ -1,7 +1,0 @@
-name = "example-jobstreet-ph"
-kind = "jobstreet_ph"
-enabled = false
-priority = 5
-trust_weight = 0.7
-fetch_cap = 50
-board_url = "https://api.example.com/jobstreet-ph/jobs"

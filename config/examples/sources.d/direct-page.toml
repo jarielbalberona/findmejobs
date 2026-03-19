@@ -1,0 +1,7 @@
+name = "smartrecruiters-career-sites-direct"
+kind = "direct_page"
+enabled = false
+priority = 5
+trust_weight = 0.8
+page_url = "https://jobs.smartrecruiters.com/smartrecruiters/744000106292088-senior-product-manager-career-sites-"
+company_name = "SmartRecruiters Inc"

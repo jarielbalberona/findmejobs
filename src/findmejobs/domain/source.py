@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, HttpUrl
 
-PREDICTABLE_ATS_KINDS = frozenset({"greenhouse", "lever", "ashby", "smartrecruiters"})
+PREDICTABLE_ATS_KINDS = frozenset({"greenhouse", "lever", "ashby", "smartrecruiters", "workable"})
 PH_BOARD_KINDS = frozenset({"jobstreet_ph", "kalibrr", "bossjob_ph", "foundit_ph"})
 DIRECT_PAGE_KINDS = frozenset({"direct_page"})
 DISCOVERY_KINDS = frozenset({"rss"})

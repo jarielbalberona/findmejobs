@@ -1,3 +1,6 @@
+# Copy to config/app.toml and adjust paths, SMTP, and delivery settings.
+# config/app.toml is gitignored as operator-local.
+
 [database]
 url = "sqlite:///./var/app.db"
 

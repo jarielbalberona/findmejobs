@@ -181,6 +181,11 @@ def runtime_config_files(runtime_paths: dict[str, Path]) -> tuple[Path, Path, Pa
 
 
 @pytest.fixture()
+def runtime_config_files_all_sources_disabled(runtime_paths: dict[str, Path]) -> tuple[Path, Path, Path]:
+    return write_runtime_config(runtime_paths, rss_enabled=False, greenhouse_enabled=False)
+
+
+@pytest.fixture()
 def migrated_runtime_config_files(
     runtime_config_files: tuple[Path, Path, Path],
     runtime_paths: dict[str, Path],
@@ -188,3 +193,13 @@ def migrated_runtime_config_files(
 ) -> tuple[Path, Path, Path]:
     upgrade_test_database(project_root, f"sqlite:///{runtime_paths['db']}")
     return runtime_config_files
+
+
+@pytest.fixture()
+def migrated_runtime_config_files_all_sources_disabled(
+    runtime_config_files_all_sources_disabled: tuple[Path, Path, Path],
+    runtime_paths: dict[str, Path],
+    project_root: Path,
+) -> tuple[Path, Path, Path]:
+    upgrade_test_database(project_root, f"sqlite:///{runtime_paths['db']}")
+    return runtime_config_files_all_sources_disabled

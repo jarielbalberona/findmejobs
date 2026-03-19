@@ -1,0 +1,6 @@
+name = "remoteyeah-rss"
+kind = "rss"
+enabled = true
+priority = 7
+trust_weight = 0.8
+feed_url = "https://remoteyeah.com/rss.xml"

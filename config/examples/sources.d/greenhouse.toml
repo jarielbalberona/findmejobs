@@ -1,0 +1,8 @@
+name = "nansen-greenhouse"
+kind = "greenhouse"
+enabled = false
+priority = 20
+trust_weight = 1.1
+company_name = "Nansen"
+board_token = "nansen"
+include_content = true

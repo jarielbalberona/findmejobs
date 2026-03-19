@@ -9,6 +9,14 @@ test-cv.pdf
 state/**
 !state/.gitkeep
 
+# Operator-local config (secrets, CV-derived prefs, real source URLs/tokens).
+# Committed templates: config/examples/app.toml, config/examples/sources.d/*.toml
+config/app.toml
+config/profile.toml
+config/profile.yaml
+config/ranking.yaml
+config/sources.d/*.toml
+
 *.db
 *.sqlite
 *.sqlite3

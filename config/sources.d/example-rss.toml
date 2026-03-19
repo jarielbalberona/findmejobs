@@ -1,4 +1,0 @@
-name = "example-rss"
-kind = "rss"
-enabled = false
-feed_url = "https://example.com/jobs.rss"

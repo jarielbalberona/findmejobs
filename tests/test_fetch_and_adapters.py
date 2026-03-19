@@ -18,6 +18,7 @@ from findmejobs.config.models import (
     LeverSourceConfig,
     RSSSourceConfig,
     SmartRecruitersSourceConfig,
+    WorkableSourceConfig,
 )
 from findmejobs.db.models import NormalizedJob, RawDocument, SourceFetchRun, SourceJob
 from findmejobs.domain.source import FetchArtifact
@@ -31,6 +32,7 @@ from findmejobs.ingestion.adapters.kalibrr import KalibrrAdapter
 from findmejobs.ingestion.adapters.lever import LeverAdapter
 from findmejobs.ingestion.adapters.rss import RSSAdapter, canonical_rss_key
 from findmejobs.ingestion.adapters.smartrecruiters import SmartRecruitersAdapter
+from findmejobs.ingestion.adapters.workable import WorkableAdapter
 from findmejobs.normalization.canonicalize import normalize_job
 from findmejobs.ingestion.fetch import fetch_to_artifact
 from findmejobs.ingestion.orchestrator import run_ingest
@@ -128,6 +130,35 @@ def test_smartrecruiters_adapter_parses_realistic_fixture(fixtures_dir: Path) ->
     assert len(records) == 1
     assert records[0].source_job_key == "sr-1"
     assert records[0].company == "Example Corp"
+
+
+def test_workable_adapter_parses_realistic_fixture(fixtures_dir: Path) -> None:
+    artifact = FetchArtifact(
+        fetched_url="https://www.workable.com/api/accounts/example?details=true",
+        final_url="https://www.workable.com/api/accounts/example?details=true",
+        status_code=200,
+        content_type="application/json",
+        headers={},
+        fetched_at=utcnow(),
+        body_bytes=(fixtures_dir / "workable_jobs.json").read_bytes(),
+        sha256="sha",
+        storage_path="/tmp/workable.json",
+    )
+    config = WorkableSourceConfig(
+        name="workable-source",
+        kind="workable",
+        enabled=True,
+        account_subdomain="example",
+        company_name="Ignored Fallback",
+    )
+    records = WorkableAdapter().parse(artifact, config)
+
+    assert len(records) == 1
+    assert records[0].source_job_key == "AE84C38EE2"
+    assert records[0].company == "Example Hiring Inc"
+    assert records[0].location_text == "London, United Kingdom"
+    assert records[0].salary_raw == "GBP 60000 - 80000"
+    assert "on_site" in records[0].tags_raw
 
 
 def test_ashby_adapter_parses_realistic_fixture(fixtures_dir: Path) -> None:
@@ -282,6 +313,7 @@ def test_foundit_ph_adapter_parses_realistic_fixture(fixtures_dir: Path) -> None
 @pytest.mark.parametrize(
     ("config", "body", "expected_error"),
     [
+        (WorkableSourceConfig(name="workable", kind="workable", enabled=True, account_subdomain="example"), b"{}", "invalid_workable_payload"),
         (JobStreetPHSourceConfig(name="jobstreet", kind="jobstreet_ph", enabled=True, board_url="https://example.test/jobstreet"), b"{}", "invalid_jobstreet_ph_payload"),
         (KalibrrSourceConfig(name="kalibrr", kind="kalibrr", enabled=True, board_url="https://example.test/kalibrr"), b"{}", "invalid_kalibrr_payload"),
         (BossjobPHSourceConfig(name="bossjob", kind="bossjob_ph", enabled=True, board_url="https://example.test/bossjob"), b"{}", "invalid_bossjob_ph_payload"),
@@ -301,6 +333,7 @@ def test_ph_board_adapters_fail_visibly_on_malformed_payload(config, body: bytes
         storage_path="/tmp/board.json",
     )
     adapter = {
+        "workable": WorkableAdapter(),
         "jobstreet_ph": JobStreetPHAdapter(),
         "kalibrr": KalibrrAdapter(),
         "bossjob_ph": BossjobPHAdapter(),

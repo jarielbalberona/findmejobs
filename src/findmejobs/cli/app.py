@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import Counter
 from pathlib import Path
+from typing import Annotated
 
 import typer
+from typer import Context
 from pydantic import ValidationError
 from sqlalchemy import select
 
 from findmejobs.application.service import ApplicationDraftService
 from findmejobs.config.loader import ensure_directories, load_app_config, load_profile_config, load_source_configs, resolve_profile_config_path
+from findmejobs.config.models import SourceConfig
 from findmejobs.db.models import Digest, JobCluster, JobScore, NormalizedJob, Source, SourceJob
 from findmejobs.db.repositories import (
     create_job_feedback,
@@ -36,17 +40,34 @@ from findmejobs.utils.ids import new_id
 from findmejobs.utils.locking import FileLock
 from findmejobs.utils.time import utcnow
 
-app = typer.Typer(help="Single-host job intelligence CLI")
-review_app = typer.Typer(help="Review packet commands")
-profile_app = typer.Typer(help="Profile bootstrap commands")
-digest_app = typer.Typer(help="Digest commands")
-feedback_app = typer.Typer(help="Feedback commands")
-reprocess_app = typer.Typer(help="Reprocess commands")
+app = typer.Typer(
+    help="Single-host job intelligence CLI. Typical flow: ingest → rank → review export → digest send.",
+    no_args_is_help=True,
+    epilog="Command groups: review, profile, digest, feedback, reprocess — use e.g. `review --help`.",
+)
+review_app = typer.Typer(help="Sanitized review packets (export to outbox, import results from inbox)")
+profile_app = typer.Typer(help="Profile bootstrap from resume → draft → promote")
+digest_app = typer.Typer(help="Email digest send / resend")
+feedback_app = typer.Typer(help="Operator feedback on jobs/clusters")
+reprocess_app = typer.Typer(help="Re-run normalization or review packet rebuilds")
 app.add_typer(review_app, name="review")
 app.add_typer(profile_app, name="profile")
 app.add_typer(digest_app, name="digest")
 app.add_typer(feedback_app, name="feedback")
 app.add_typer(reprocess_app, name="reprocess")
+
+
+def _typer_group_show_help_callback(ctx: Context) -> None:
+    if ctx.invoked_subcommand is None:
+        typer.echo(ctx.get_help())
+        raise typer.Exit(0)
+
+
+review_app.callback(invoke_without_command=True)(_typer_group_show_help_callback)
+profile_app.callback(invoke_without_command=True)(_typer_group_show_help_callback)
+digest_app.callback(invoke_without_command=True)(_typer_group_show_help_callback)
+feedback_app.callback(invoke_without_command=True)(_typer_group_show_help_callback)
+reprocess_app.callback(invoke_without_command=True)(_typer_group_show_help_callback)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -71,6 +92,14 @@ def _load_runtime(app_config_path: Path, profile_path: Path, sources_dir: Path):
 
 def _pipeline_lock_path(app_config) -> Path:
     return app_config.storage.lock_dir / "pipeline.lock"
+
+
+def _filter_source_configs(sources: list[SourceConfig], source_tokens: list[str]) -> list[SourceConfig]:
+    """Keep configs whose name or adapter kind matches any non-empty token."""
+    want = {t.strip() for t in source_tokens if t.strip()}
+    if not want:
+        return sources
+    return [s for s in sources if s.name in want or s.kind in want]
 
 
 def _canonical_job_from_row(row: NormalizedJob, source: Source | None = None) -> CanonicalJob:
@@ -109,8 +138,36 @@ def ingest(
     app_config_path: Path = typer.Option(Path("config/app.toml"), exists=True),
     profile_path: Path = typer.Option(Path("config/profile.toml")),
     sources_dir: Path = typer.Option(Path("config/sources.d"), exists=True, file_okay=False),
+    source: Annotated[
+        list[str],
+        typer.Option(
+            "--source",
+            help="Run only source configs whose name or kind matches (repeatable). E.g. --source greenhouse or --source acme.",
+        ),
+    ] = [],
 ) -> None:
-    app_config, _profile, sources, session_factory = _load_runtime(app_config_path, profile_path, sources_dir)
+    app_config, _profile, all_sources, session_factory = _load_runtime(app_config_path, profile_path, sources_dir)
+    sources = _filter_source_configs(all_sources, source)
+    if source:
+        if not sources:
+            names = ", ".join(sorted({s.name for s in all_sources}))
+            typer.echo(
+                f"No source configs matched --source {source!r}. "
+                f"Use names (or kinds) from TOML files under {sources_dir} (names: {names}).",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+    if sources and not any(s.enabled for s in sources):
+        n = len(sources)
+        selected = ", ".join(sorted(s.name for s in sources))
+        typer.echo(
+            f"No enabled sources to run: all {n} matching config(s) are disabled "
+            f"(enabled = false under {sources_dir}). "
+            f"Enable at least one in TOML or adjust --source. "
+            f"Matching names: {selected}.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
     with FileLock(_pipeline_lock_path(app_config)):
         with session_factory() as session:
             run = create_pipeline_run(session, "ingest", new_id)
@@ -157,6 +214,7 @@ def rank(
                 )
                 scored = 0
                 filtered = 0
+                hard_filter_hits: Counter[str] = Counter()
                 for cluster, job_row, source in clusters:
                     feedback_types = feedback_types_for_job(
                         session,
@@ -169,9 +227,40 @@ def rank(
                     scored += 1
                     if breakdown.hard_filter_reasons:
                         filtered += 1
-                finish_pipeline_run(run, "success", {"scored": scored, "filtered": filtered})
+                        hard_filter_hits.update(breakdown.hard_filter_reasons)
+                rank_stats = {
+                    "scored": scored,
+                    "filtered": filtered,
+                    "hard_filter_reason_counts": dict(sorted(hard_filter_hits.items())),
+                }
+                finish_pipeline_run(run, "success", rank_stats)
                 session.commit()
                 typer.echo(f"rank complete: scored={scored} filtered={filtered}")
+                if hard_filter_hits:
+                    parts = ", ".join(f"{reason}={count}" for reason, count in sorted(hard_filter_hits.items()))
+                    typer.echo(
+                        "hard filter reasons (hits; a job with multiple reasons adds to each): "
+                        + parts
+                    )
+            except typer.Exit:
+                raise
+            except Exception as exc:
+                finish_pipeline_run(run, "failed", error_message=str(exc))
+                session.commit()
+                raise
+
+
+def _run_review_import_results(app_config_path: Path, profile_path: Path, sources_dir: Path) -> None:
+    app_config, _profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_dir)
+    with FileLock(_pipeline_lock_path(app_config)):
+        with session_factory() as session:
+            run = create_pipeline_run(session, "review_import", new_id)
+            session.commit()
+            try:
+                imported = import_review_packets(session, app_config, new_id)
+                finish_pipeline_run(run, "success", {"imported": imported})
+                session.commit()
+                typer.echo(f"review import complete: imported={imported}")
             except typer.Exit:
                 raise
             except Exception as exc:
@@ -210,22 +299,17 @@ def review_import_results(
     profile_path: Path = typer.Option(Path("config/profile.toml")),
     sources_dir: Path = typer.Option(Path("config/sources.d"), exists=True, file_okay=False),
 ) -> None:
-    app_config, _profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_dir)
-    with FileLock(_pipeline_lock_path(app_config)):
-        with session_factory() as session:
-            run = create_pipeline_run(session, "review_import", new_id)
-            session.commit()
-            try:
-                imported = import_review_packets(session, app_config, new_id)
-                finish_pipeline_run(run, "success", {"imported": imported})
-                session.commit()
-                typer.echo(f"review import complete: imported={imported}")
-            except typer.Exit:
-                raise
-            except Exception as exc:
-                finish_pipeline_run(run, "failed", error_message=str(exc))
-                session.commit()
-                raise
+    _run_review_import_results(app_config_path, profile_path, sources_dir)
+
+
+@review_app.command("import")
+def review_import_openclaw_results(
+    app_config_path: Path = typer.Option(Path("config/app.toml"), exists=True),
+    profile_path: Path = typer.Option(Path("config/profile.toml")),
+    sources_dir: Path = typer.Option(Path("config/sources.d"), exists=True, file_okay=False),
+) -> None:
+    """Same as import-results (reads review inbox → SQLite)."""
+    _run_review_import_results(app_config_path, profile_path, sources_dir)
 
 
 @digest_app.command("send")

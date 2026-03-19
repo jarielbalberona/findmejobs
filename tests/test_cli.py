@@ -166,6 +166,91 @@ def test_ingest_command_works_for_one_source(
         assert session.scalar(select(func.count()).select_from(NormalizedJob)) == 4
 
 
+def test_ingest_command_source_filter_limits_to_matching_configs(
+    cli_runner,
+    fixtures_dir: Path,
+    migrated_runtime_config_files: tuple[Path, Path, Path],
+    monkeypatch,
+) -> None:
+    app_path, profile_path, sources_dir = migrated_runtime_config_files
+    FakeHttpClient.fixtures = {
+        "https://example.test/jobs.rss": (fixtures_dir / "rss_feed.xml").read_bytes(),
+        "https://boards-api.greenhouse.io/v1/boards/acme/jobs?content=true": (
+            fixtures_dir / "greenhouse_jobs.json"
+        ).read_bytes(),
+    }
+    FakeHttpClient.content_types = {
+        "https://example.test/jobs.rss": "application/rss+xml",
+        "https://boards-api.greenhouse.io/v1/boards/acme/jobs?content=true": "application/json",
+    }
+    monkeypatch.setattr("findmejobs.ingestion.orchestrator.httpx.Client", FakeHttpClient)
+
+    result = cli_runner.invoke(
+        app,
+        [
+            "ingest",
+            "--app-config-path",
+            str(app_path),
+            "--profile-path",
+            str(profile_path),
+            "--sources-dir",
+            str(sources_dir),
+            "--source",
+            "greenhouse",
+        ],
+    )
+    assert result.exit_code == 0
+    session_factory = create_session_factory(load_app_config(app_path).database.url)
+    with session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(Source)) == 1
+        assert session.scalar(select(func.count()).select_from(NormalizedJob)) == 2
+
+
+def test_ingest_command_errors_when_all_matching_sources_disabled(
+    cli_runner,
+    migrated_runtime_config_files_all_sources_disabled: tuple[Path, Path, Path],
+) -> None:
+    app_path, profile_path, sources_dir = migrated_runtime_config_files_all_sources_disabled
+    result = cli_runner.invoke(
+        app,
+        [
+            "ingest",
+            "--app-config-path",
+            str(app_path),
+            "--profile-path",
+            str(profile_path),
+            "--sources-dir",
+            str(sources_dir),
+        ],
+    )
+    assert result.exit_code == 1
+    assert "No enabled sources to run" in result.stderr
+    assert "enabled = false" in result.stderr
+
+
+def test_ingest_command_source_filter_errors_when_nothing_matches(
+    cli_runner,
+    migrated_runtime_config_files: tuple[Path, Path, Path],
+) -> None:
+    app_path, profile_path, sources_dir = migrated_runtime_config_files
+    result = cli_runner.invoke(
+        app,
+        [
+            "ingest",
+            "--app-config-path",
+            str(app_path),
+            "--profile-path",
+            str(profile_path),
+            "--sources-dir",
+            str(sources_dir),
+            "--source",
+            "definitely-not-a-source",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "No source configs matched" in result.stderr
+
+
 def test_ingest_command_fails_when_any_enabled_source_fails(
     cli_runner,
     fixtures_dir: Path,
@@ -255,6 +340,44 @@ def test_rank_command_only_scores_valid_jobs(
         assert session.scalar(select(func.count()).select_from(JobScore)) == 1
 
 
+def test_rank_command_prints_hard_filter_reason_summary(
+    cli_runner,
+    migrated_runtime_config_files: tuple[Path, Path, Path],
+) -> None:
+    """When jobs fail hard filters, rank prints per-reason hit counts for transparency."""
+    app_path, profile_path, sources_dir = migrated_runtime_config_files
+    app_config = load_app_config(app_path)
+    session_factory = create_session_factory(app_config.database.url)
+    with session_factory() as session:
+        _seed_cluster(
+            session,
+            source_id="source-onsite",
+            source_name="src",
+            source_job_key="job-onsite",
+            normalized_job_id="job-onsite",
+            cluster_id="cluster-onsite",
+            title="Backend Engineer",
+            company="Example",
+            location_text="San Francisco, CA",
+            location_type="onsite",
+            description_text="Python SQL",
+            normalization_status="valid",
+        )
+        session.commit()
+
+    result = cli_runner.invoke(
+        app,
+        ["rank", "--app-config-path", str(app_path), "--profile-path", str(profile_path), "--sources-dir", str(sources_dir)],
+    )
+    assert result.exit_code == 0
+    assert "hard filter reasons" in result.stdout
+    assert "not_remote=" in result.stdout
+    with session_factory() as session:
+        run = session.scalar(select(PipelineRun).where(PipelineRun.command == "rank"))
+        assert run is not None
+        assert run.stats_json.get("hard_filter_reason_counts", {}).get("not_remote") == 1
+
+
 def test_review_command_only_exports_sanitized_packets(
     cli_runner,
     migrated_runtime_config_files: tuple[Path, Path, Path],
@@ -335,6 +458,37 @@ def test_review_command_only_exports_sanitized_packets(
     )
     assert result.exit_code == 0
     assert "exported=0" in result.stdout
+
+
+def test_cli_command_groups_show_help_when_no_subcommand(cli_runner) -> None:
+    for group in ("review", "profile", "digest", "feedback", "reprocess"):
+        result = cli_runner.invoke(app, [group])
+        assert result.exit_code == 0
+        out = result.stdout + result.stderr
+        assert "Usage" in out
+
+
+def test_review_import_alias_matches_import_results(
+    cli_runner,
+    migrated_runtime_config_files: tuple[Path, Path, Path],
+) -> None:
+    app_path, profile_path, sources_dir = migrated_runtime_config_files
+    for sub in ("import-results", "import"):
+        result = cli_runner.invoke(
+            app,
+            [
+                "review",
+                sub,
+                "--app-config-path",
+                str(app_path),
+                "--profile-path",
+                str(profile_path),
+                "--sources-dir",
+                str(sources_dir),
+            ],
+        )
+        assert result.exit_code == 0
+        assert "imported=" in result.stdout
 
 
 def test_doctor_command_surfaces_source_issues(cli_runner, migrated_runtime_config_files: tuple[Path, Path, Path]) -> None:

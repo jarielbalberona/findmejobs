@@ -1,6 +1,0 @@
-name = "example-greenhouse"
-kind = "greenhouse"
-enabled = false
-company_name = "Example"
-board_token = "example"
-include_content = true

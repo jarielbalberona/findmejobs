@@ -122,6 +122,29 @@ def test_ph_board_source_configs_load_with_lower_default_trust(tmp_path: Path) -
     assert trust_weights["foundit_ph"] < 1.0
 
 
+def test_workable_source_config_loads_with_expected_defaults(tmp_path: Path) -> None:
+    sources_dir = tmp_path / "sources.d"
+    sources_dir.mkdir(parents=True)
+    (sources_dir / "workable.toml").write_text(
+        '\n'.join(
+            [
+                'name = "workable-main"',
+                'kind = "workable"',
+                'enabled = true',
+                'account_subdomain = "example"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    source = load_source_configs(sources_dir)[0]
+
+    assert source.kind == "workable"
+    assert source.trust_weight == 1.0
+    assert source.priority == 0
+    assert source.include_details is True
+
+
 def test_ph_board_source_configs_accept_explicit_priority_trust_and_fetch_cap(tmp_path: Path) -> None:
     sources_dir = tmp_path / "sources.d"
     sources_dir.mkdir(parents=True)

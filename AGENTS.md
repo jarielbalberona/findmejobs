@@ -66,49 +66,63 @@ No microservices, Kafka, Celery, Redis, or browser automation unless explicitly 
 
 ---
 
-## Slice history
+## Available features
 
-### Slice 1 — core pipeline
-- Typed config loading (TOML)
-- SQLite with WAL mode, Alembic migrations
-- RSS and Greenhouse ingestion
-- Raw document capture before normalization
-- Canonical job normalization
-- Exact layered dedupe
-- Deterministic ranking with hard filters and weighted signals
-- Sanitized review packet export/import
-- OpenClaw file-boundary client
+What the codebase is intended to deliver today (grouped for clarity; not a release checklist).
+
+### Config and runtime
+- Typed config loading (TOML and YAML)
+- Runtime paths: `config/app.toml`, `config/profile.yaml`, `config/ranking.yaml`, `config/sources.d/*.toml` (operator-local; gitignored—templates under `config/examples/`)
 - Typer CLI
-- Structured logging and doctor health checks
-- systemd service/timer examples
+- Structured logging, `doctor` health checks, operational `report`ing
+- systemd service/timer examples for scheduled runs
 
-### Slice 2 — expanded sources and operations
-- Profile bootstrap from CV/resume (PDF, DOCX, TXT, Markdown, JSON Resume) via OpenClaw
-- TOML + YAML config loading
-- Additional ATS adapters: Ashby, Lever, SmartRecruiters
-- PH board adapters: JobStreet Philippines, Kalibrr, Bossjob, foundit Philippines
-- Generic direct-page parser
-- Deterministic ranking with title families, company preferences, timezone fit, source trust, stale decay
-- Digest email delivery
-- Operator feedback
-- Rerank/reprocess commands
-- Source health and reporting
+### Data and persistence
+- SQLite with WAL mode and Alembic migrations
 
-### Slice 2.5 — application drafting
-- Bounded application packets from canonical job fields, score summaries, sanitized review excerpts, and canonical profile data
-- OpenClaw drafting requests scoped to the application job directory
-- Drafts only, never submission
+### Ingestion and normalization
+- RSS discovery and fetching
+- Tier A ATS-style adapters: Greenhouse, Ashby, Lever, SmartRecruiters, Workable
+- Tier B PH board adapters: JobStreet Philippines, Kalibrr, Bossjob, foundit Philippines
+- Tier C generic direct-page parser (conservative)
+- Raw payload capture on disk before normalization
+- Canonical job normalization into one schema
+- Layered exact dedupe and clustering (canonical URL, source key, normalized fields; fuzzy similarity remains deferred—see **What’s coming / deferred**)
 
-### Slice 3 — deferred unless explicitly approved
-- LinkedIn scraping
-- Playwright / full browser automation
-- Auto-submit
+### Profile bootstrap
+- Resume import (PDF, DOCX, TXT, Markdown, JSON Resume, pasted text) with OpenClaw-assisted draft generation
+- Draft profile and ranking YAML, missing-fields reporting, validate/diff/promote/reimport flows
+
+### Ranking and feedback
+- Deterministic ranking: hard filters, weighted signals, title families, company preferences, timezone fit, source trust, stale decay, operator feedback inputs
+- `rank` / `rerank` and safe pipeline reruns
+
+### Review and delivery
+- Sanitized review packet export/import and strict OpenClaw file-boundary client
+- Deterministic digest generation and email delivery (with resend where applicable)
+- `reprocess` for review packets and targeted normalize reruns
+
+### Application drafting (bounded)
+- Application packet generation from canonical job data, scores, sanitized review excerpts, and profile fields
+- OpenClaw drafting requests scoped under per-job application state
+- Cover-letter and answers drafts only—never auto-submit
+
+---
+
+## What's coming / deferred
+
+These are **not** part of the default product surface. Treat them as out of scope until explicitly approved. Operators see the same list under **What’s coming** in [README.md](README.md).
+
+- LinkedIn scraping / Easy Apply–style flows
+- Playwright or full browser automation for ingestion
+- Auto-submit of applications
 - CAPTCHA solving
 - Board credentials or session storage
 - Multi-agent application workflows
-- Interview scheduling or downstream CRM/state-machine automation
-- Postgres migration (unless SQLite is truly insufficient)
-- Web dashboard (unless operations are already stable)
+- Interview scheduling or downstream CRM / state-machine automation
+- Postgres (only if SQLite proves insufficient)
+- Web dashboard (only if single-host CLI ops are stable and it earns its complexity)
+- Stronger fuzzy dedupe (if added, must stay bounded, tested, and auditable)
 
 ---
 
@@ -186,10 +200,9 @@ This repo should contain modules for:
 - observability
 
 ### Configuration
-- `config/app.toml` — runtime settings
-- `config/profile.yaml` — canonical profile
-- `config/ranking.yaml` — canonical ranking policy
-- `config/sources.d/*.toml` — source definitions
+- Committed templates: `config/examples/app.toml`, `config/examples/sources.d/*.toml`, and draft examples under `config/examples/`
+- Operator-local (gitignored): `config/app.toml`, `config/profile.toml`, `config/profile.yaml`, `config/ranking.yaml`, `config/sources.d/*.toml`
+- Runtime reads the **local** paths above after you copy from `config/examples/`
 
 ### State
 - `state/profile_bootstrap/` — draft artifacts from resume import
@@ -355,10 +368,10 @@ Expected commands:
 - `findmejobs profile validate-draft`
 - `findmejobs profile diff`
 - `findmejobs profile promote-draft`
-- `findmejobs ingest`
+- `findmejobs ingest` (optional `--source` filter by config name or adapter kind)
 - `findmejobs rank`
-- `findmejobs review`
-- `findmejobs digest`
+- `findmejobs review export` / `findmejobs review import-results` (alias: `review import`)
+- `findmejobs digest send` (and `digest resend` where applicable)
 - `findmejobs report`
 - `findmejobs feedback`
 - `findmejobs rerank`
@@ -419,7 +432,7 @@ When modifying this repo:
 4. Preserve observability.
 5. Update tests.
 6. Update config/docs/examples if behavior changes.
-7. Do not expand into Slice 3 scope without explicit approval.
+7. Do not expand into deferred / “what’s coming” scope without explicit approval.
 
 ## What a good change looks like
 
@@ -448,8 +461,7 @@ When modifying this repo:
 If you are an AI coding agent working in this repo:
 
 - read this file first
-- respect slice boundaries
-- do not jump ahead into Slice 3
+- stay within **Available features** unless the operator explicitly approves **What’s coming / deferred**
 - do not treat OpenClaw as the raw scraper
 - do not invent unsupported user preferences
 - do not make ranking depend on LLM output
@@ -461,8 +473,7 @@ If you are an AI coding agent working in this repo:
 - keep outputs concrete and implementation-ready
 
 When producing plans or code:
-- state what slice the change belongs to
-- state what is intentionally deferred
+- state how the change fits existing features and what remains intentionally deferred
 - include validation/test implications
 - preserve command-line operability
 - preserve source classification and trust weighting

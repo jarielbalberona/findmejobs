@@ -18,6 +18,7 @@ from findmejobs.config.models import (
     RSSSourceConfig,
     SmartRecruitersSourceConfig,
     SourceConfig,
+    WorkableSourceConfig,
 )
 from findmejobs.db.repositories import (
     create_fetch_run,
@@ -38,6 +39,7 @@ from findmejobs.ingestion.adapters.kalibrr import KalibrrAdapter
 from findmejobs.ingestion.adapters.lever import LeverAdapter
 from findmejobs.ingestion.adapters.rss import RSSAdapter
 from findmejobs.ingestion.adapters.smartrecruiters import SmartRecruitersAdapter
+from findmejobs.ingestion.adapters.workable import WorkableAdapter
 from findmejobs.ingestion.fetch import fetch_to_artifact
 from findmejobs.normalization.canonicalize import normalize_job
 from findmejobs.utils.time import utcnow
@@ -177,6 +179,8 @@ def build_adapter(config: SourceConfig):
         return LeverAdapter()
     if isinstance(config, SmartRecruitersSourceConfig):
         return SmartRecruitersAdapter()
+    if isinstance(config, WorkableSourceConfig):
+        return WorkableAdapter()
     if isinstance(config, AshbySourceConfig):
         return AshbyAdapter()
     if isinstance(config, JobStreetPHSourceConfig):

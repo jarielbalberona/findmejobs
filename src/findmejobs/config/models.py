@@ -91,6 +91,13 @@ class SmartRecruitersSourceConfig(SourceBaseConfig):
     company_name: str | None = None
 
 
+class WorkableSourceConfig(SourceBaseConfig):
+    kind: Literal["workable"]
+    account_subdomain: str
+    include_details: bool = True
+    company_name: str | None = None
+
+
 class AshbySourceConfig(SourceBaseConfig):
     kind: Literal["ashby"]
     board_url: HttpUrl
@@ -136,6 +143,7 @@ SourceConfig = Annotated[
     | GreenhouseSourceConfig
     | LeverSourceConfig
     | SmartRecruitersSourceConfig
+    | WorkableSourceConfig
     | AshbySourceConfig
     | JobStreetPHSourceConfig
     | KalibrrSourceConfig

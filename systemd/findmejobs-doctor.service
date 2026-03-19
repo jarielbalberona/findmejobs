@@ -1,0 +1,13 @@
+[Unit]
+Description=FindMeJobs doctor run
+
+[Service]
+Type=oneshot
+User=findmejobs
+Group=findmejobs
+WorkingDirectory=/opt/findmejobs
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/findmejobs/.venv/bin/findmejobs doctor --app-config-path /etc/findmejobs/app.toml --profile-path /etc/findmejobs/profile.toml --sources-dir /etc/findmejobs/sources.d
+
+[Install]
+WantedBy=multi-user.target

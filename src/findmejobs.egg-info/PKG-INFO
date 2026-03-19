@@ -1,0 +1,251 @@
+Metadata-Version: 2.4
+Name: findmejobs
+Version: 0.1.0
+Summary: Single-host job intelligence pipeline
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+Requires-Dist: alembic<2.0,>=1.13
+Requires-Dist: feedparser<7.0,>=6.0
+Requires-Dist: httpx<0.28,>=0.27
+Requires-Dist: lxml<6.0,>=5.0
+Requires-Dist: pydantic<3.0,>=2.7
+Requires-Dist: pydantic-settings<3.0,>=2.2
+Requires-Dist: rapidfuzz<4.0,>=3.9
+Requires-Dist: SQLAlchemy<3.0,>=2.0
+Requires-Dist: tenacity<9.0,>=8.2
+Requires-Dist: typer<1.0,>=0.12
+Provides-Extra: dev
+Requires-Dist: pytest<9.0,>=8.0; extra == "dev"
+
+# FindMeJobs Slice 1
+
+Slice 1 is the smallest production-meaningful version of the job intelligence pipeline:
+
+- typed config
+- SQLite with WAL mode
+- Alembic migrations
+- RSS and Greenhouse ingestion
+- raw document storage before normalization
+- canonical job normalization
+- exact layered dedupe
+- deterministic ranking
+- sanitized review packet staging
+- OpenClaw file-boundary client
+- Typer CLI
+- systemd timer examples
+
+What it does not do yet:
+
+- no Ashby or Workable
+- no generic direct-page parser
+- no digest delivery
+- no browser automation
+- no LinkedIn scraping
+- no auto-submit
+
+## Trust boundary
+
+Raw source payloads are fetched and stored under `var/raw/` before normalization. OpenClaw never reads those raw artifacts and never reads SQLite directly. It only sees sanitized JSON packets staged in `review_outbox_dir`, and it writes structured review results into `review_inbox_dir`.
+
+That is deliberate. Raw HTML and source payloads are untrusted input. Review is downstream of the trusted pipeline, not part of parsing or ranking.
+
+## Project layout
+
+```text
+src/findmejobs/
+  cli/             Typer commands
+  config/          typed config models and loaders
+  db/              SQLAlchemy models, sessions, repositories
+  domain/          canonical types
+  ingestion/       fetch and source adapters
+  normalization/   canonicalization rules
+  dedupe/          cluster matching
+  ranking/         hard filters and deterministic signals
+  review/          sanitized packet builder and OpenClaw client
+  observability/   structured logging and doctor checks
+  utils/           small helpers
+```
+
+## Local setup
+
+1. Create a virtualenv and install dependencies.
+
+```bash
+python3.12 -m venv .venv
+. .venv/bin/activate
+pip install -e ".[dev]"
+```
+
+2. Edit the sample configs:
+
+- `config/app.toml`
+- `config/profile.toml`
+- `config/sources.d/example-rss.toml`
+- `config/sources.d/example-greenhouse.toml`
+
+3. Enable at least one source and point it at a real endpoint.
+
+4. Run migrations.
+
+```bash
+.venv/bin/alembic upgrade head
+```
+
+5. Run the Slice 1 flow.
+
+```bash
+.venv/bin/findmejobs ingest
+.venv/bin/findmejobs rank
+.venv/bin/findmejobs review export
+.venv/bin/findmejobs doctor
+```
+
+6. Place structured OpenClaw review results into `var/review/inbox/`, then import them:
+
+```bash
+.venv/bin/findmejobs review import-results
+```
+
+## EC2 setup
+
+Recommended host assumptions:
+
+- Ubuntu LTS
+- dedicated `findmejobs` user
+- app code under `/opt/findmejobs`
+- runtime config under `/etc/findmejobs`
+- runtime state under `/var/lib/findmejobs`
+
+Example deployment steps:
+
+```bash
+sudo adduser --system --group --home /opt/findmejobs findmejobs
+sudo mkdir -p /opt/findmejobs /etc/findmejobs/sources.d /var/lib/findmejobs
+sudo chown -R findmejobs:findmejobs /opt/findmejobs /var/lib/findmejobs
+```
+
+Install the app into `/opt/findmejobs`, then copy:
+
+- `config/app.toml` to `/etc/findmejobs/app.toml`
+- `config/profile.toml` to `/etc/findmejobs/profile.toml`
+- `config/sources.d/*.toml` to `/etc/findmejobs/sources.d/`
+
+Adjust `/etc/findmejobs/app.toml` for production paths:
+
+```toml
+[database]
+url = "sqlite:////var/lib/findmejobs/app.db"
+
+[storage]
+root_dir = "/var/lib/findmejobs"
+raw_dir = "/var/lib/findmejobs/raw"
+review_outbox_dir = "/var/lib/findmejobs/review/outbox"
+review_inbox_dir = "/var/lib/findmejobs/review/inbox"
+lock_dir = "/var/lib/findmejobs/locks"
+```
+
+Run migrations:
+
+```bash
+sudo -u findmejobs /opt/findmejobs/.venv/bin/alembic -c /opt/findmejobs/alembic.ini upgrade head
+```
+
+Install the unit files from `systemd/`, then:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now findmejobs-ingest.timer
+sudo systemctl enable --now findmejobs-rank.timer
+sudo systemctl enable --now findmejobs-review-export.timer
+sudo systemctl enable --now findmejobs-review-import.timer
+sudo systemctl enable --now findmejobs-doctor.timer
+```
+
+Inspect logs with:
+
+```bash
+journalctl -u findmejobs-ingest.service -u findmejobs-rank.service -u findmejobs-review-export.service -f
+```
+
+## OpenClaw result contract
+
+OpenClaw should read packet JSON from the outbox and write result JSON into the inbox using this shape:
+
+```json
+{
+  "packet_id": "packet-id",
+  "provider_review_id": "optional-provider-id",
+  "decision": "keep",
+  "confidence_label": "medium",
+  "reasons": ["Strong title match", "Good Python fit"],
+  "draft_summary": "Worth reviewing.",
+  "draft_actions": ["Open posting", "Check compensation"],
+  "reviewed_at": "2026-03-19T10:00:00Z",
+  "raw_response": {
+    "model": "openclaw",
+    "notes": "optional"
+  }
+}
+```
+
+## Tests
+
+Run:
+
+```bash
+.venv/bin/pytest
+```
+
+The current test set covers the dangerous Slice 1 logic:
+
+- URL canonicalization
+- RSS and Greenhouse parsing
+- HTML sanitization during normalization
+- exact dedupe behavior
+- deterministic ranking and hard filters
+- review packet size enforcement and markup rejection
+
+## Intentionally deferred to Slice 2
+
+- additional ATS adapters
+- generic direct-page parsing
+- fuzzy dedupe
+- digest delivery
+- backfill commands
+- richer operational reporting
+
+## Known limitations
+
+- salary parsing is minimal in Slice 1
+- no direct-page support yet
+- no digest or notification channel yet
+- review export/import is filesystem-based, not API-based
+- no fuzzy dedupe yet, by design
+
+## Acceptance checklist
+
+- [x] typed config loading
+- [x] SQLite with WAL mode
+- [x] Alembic initial migration
+- [x] core schema
+- [x] RSS adapter
+- [x] Greenhouse adapter
+- [x] raw document storage before normalization
+- [x] canonical job normalization
+- [x] exact layered dedupe
+- [x] deterministic ranking with hard filters and weighted signals
+- [x] sanitized review packet builder
+- [x] OpenClaw client abstraction limited to sanitized packets
+- [x] Typer CLI for ingest, rank, review, and doctor
+- [x] structured logging
+- [x] pytest coverage for the dangerous Slice 1 logic
+- [x] systemd examples
+
+## Explicitly rejected prototype anti-patterns
+
+- shelling out to `curl`
+- CSV as storage
+- `nohup` loops
+- broad `except` swallowing
+- raw web content sent to the reviewer
+- hidden ranking logic inside prompts

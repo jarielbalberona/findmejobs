@@ -1,0 +1,5 @@
+name = "example-greenhouse"
+kind = "greenhouse"
+enabled = false
+board_token = "example"
+include_content = true

@@ -1,0 +1,17 @@
+[database]
+url = "sqlite:///./var/app.db"
+
+[storage]
+root_dir = "./var"
+raw_dir = "./var/raw"
+review_outbox_dir = "./var/review/outbox"
+review_inbox_dir = "./var/review/inbox"
+lock_dir = "./var/locks"
+
+[http]
+timeout_seconds = 20.0
+max_attempts = 3
+user_agent = "findmejobs/0.1.0"
+
+[logging]
+level = "INFO"

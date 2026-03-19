@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Jobs</title>
+    <item>
+      <guid>rss-job-1</guid>
+      <title>Backend Engineer</title>
+      <link>https://jobs.example.test/backend-engineer?utm_source=feed</link>
+      <description><![CDATA[
+        <p>Remote role. Build APIs in Python and SQL.</p>
+      ]]></description>
+      <author>Example Labs</author>
+      <pubDate>Wed, 19 Mar 2026 08:00:00 GMT</pubDate>
+      <category>Python</category>
+      <category>Backend</category>
+    </item>
+    <item>
+      <title>Platform Engineer</title>
+      <link>https://jobs.example.test/platform-engineer</link>
+      <description><![CDATA[
+        <p>Hybrid role in Manila. AWS and Kubernetes.</p>
+      ]]></description>
+      <author>Platform Co</author>
+      <pubDate>Wed, 18 Mar 2026 08:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

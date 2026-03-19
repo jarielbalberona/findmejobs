@@ -1,0 +1,30 @@
+{
+  "jobs": [
+    {
+      "id": 101,
+      "absolute_url": "https://boards.greenhouse.io/acme/jobs/101?gh_jid=101&utm_source=boards",
+      "title": "Backend Engineer",
+      "location": {
+        "name": "Remote, Philippines"
+      },
+      "content": "<div><p>Build Python APIs with SQL and AWS.</p></div>",
+      "updated_at": "2026-03-19T07:00:00Z",
+      "departments": [
+        {"name": "Engineering"}
+      ]
+    },
+    {
+      "id": 202,
+      "absolute_url": "https://boards.greenhouse.io/acme/jobs/202",
+      "title": "Security Intern",
+      "location": {
+        "name": "Onsite, Manila"
+      },
+      "content": "<p>Assist with audits.</p>",
+      "updated_at": "2026-03-19T06:00:00Z",
+      "departments": [
+        {"name": "Security"}
+      ]
+    }
+  ]
+}

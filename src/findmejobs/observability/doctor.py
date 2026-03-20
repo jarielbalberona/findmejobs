@@ -13,6 +13,25 @@ from findmejobs.domain.source import PH_BOARD_KINDS
 from findmejobs.db.session import database_file_from_url, fetch_pragma
 from findmejobs.utils.time import ensure_utc, utcnow
 
+# Longer explanations for errors operators often hit during first-time setup (CLI `--json` adds "hints").
+DOCTOR_ERROR_HINTS: dict[str, str] = {
+    "no_enabled_sources": (
+        "Doctor counts enabled rows in the SQLite sources table, not your config files alone. "
+        "Add sources (e.g. findmejobs sources add) and run a successful findmejobs ingest so rows are upserted. "
+        "Until then this is normal right after config init or an empty sources list."
+    ),
+    "pipeline_never_succeeded": (
+        "No pipeline step has finished with status success yet (ingest, rank, review export, etc.). "
+        "Run at least one successful pipeline command—typically ingest after sources are configured. "
+        "Normal on a fresh database until the first success."
+    ),
+}
+
+
+def doctor_failure_hints(errors: list[str]) -> dict[str, str]:
+    """Return hint text only for error codes that have a dedicated explanation."""
+    return {code: DOCTOR_ERROR_HINTS[code] for code in errors if code in DOCTOR_ERROR_HINTS}
+
 
 def run_doctor(session: Session, database_url: str, required_paths: list[Path]) -> list[str]:
     errors: list[str] = []

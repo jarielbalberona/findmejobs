@@ -807,6 +807,41 @@ def test_doctor_command_surfaces_source_issues(cli_runner, migrated_runtime_conf
     )
     assert result.exit_code == 1
     assert "no_enabled_sources" in result.stdout
+    assert "Why / what to do:" in result.stdout
+    assert "SQLite" in result.stdout
+
+
+def test_doctor_json_includes_hints_for_setup_errors(
+    cli_runner, migrated_runtime_config_files: tuple[Path, Path, Path]
+) -> None:
+    app_path, profile_path, sources_dir = migrated_runtime_config_files
+    app_config = load_app_config(app_path)
+    session_factory = create_session_factory(app_config.database.url)
+    with session_factory() as session:
+        session.execute(Source.__table__.delete())
+        session.commit()
+
+    result = cli_runner.invoke(
+        app,
+        [
+            "doctor",
+            "--app-config-path",
+            str(app_path),
+            "--profile-path",
+            str(profile_path),
+            "--sources-dir",
+            str(sources_dir),
+            "--json",
+        ],
+    )
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["command"] == "doctor"
+    assert payload["status"] == "failed"
+    assert "no_enabled_sources" in payload["errors"]
+    assert "hints" in payload
+    assert "no_enabled_sources" in payload["hints"]
+    assert "ingest" in payload["hints"]["no_enabled_sources"].lower()
 
 
 def test_doctor_command_reports_stale_pipeline_and_repeated_source_failures(

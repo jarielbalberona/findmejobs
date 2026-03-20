@@ -41,7 +41,7 @@ from findmejobs.domain.source import SourceJobRecord
 from findmejobs.feedback import ALLOWED_FEEDBACK_TYPES, feedback_types_for_job, record_feedback
 from findmejobs.ingestion.orchestrator import run_ingest
 from findmejobs.normalization.canonicalize import normalize_job
-from findmejobs.observability.doctor import check_profile_config_health, run_doctor
+from findmejobs.observability.doctor import check_profile_config_health, doctor_failure_hints, run_doctor
 from findmejobs.observability.job_listing import fetch_job_previews, format_job_previews_text
 from findmejobs.observability.logging import configure_logging
 from findmejobs.observability.reporting import build_report
@@ -958,7 +958,17 @@ def doctor(
         )
     errors.extend(check_profile_config_health(profile_path.parent))
     if errors:
-        _emit_json(json_out, {"command": "doctor", "status": "failed", "errors": errors}, f"doctor failed: {errors}")
+        hints = doctor_failure_hints(errors)
+        payload = {"command": "doctor", "status": "failed", "errors": errors, "hints": hints}
+        if json_out:
+            _emit_json(json_out, payload, None)
+        else:
+            typer.echo(f"doctor failed: {errors}")
+            if hints:
+                typer.echo("")
+                typer.echo("Why / what to do:")
+                for code, text in hints.items():
+                    typer.echo(f"  • {code}: {text}")
         raise typer.Exit(code=1)
     _emit_json(json_out, {"command": "doctor", "status": "ok", "errors": []}, "doctor ok")
 

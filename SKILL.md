@@ -49,7 +49,7 @@ When the user asks to scan jobs, check health first, then run the real CLI flow,
 
 When the user asks for a routine scan, use this default sequence:
 
-1. Run `doctor`.
+1. Run `doctor`. If it fails with `no_enabled_sources` or `pipeline_never_succeeded`, explain from the command output (text **Why / what to do** section, or `--json` → `hints`): those usually mean the DB is still empty of enabled sources and/or no pipeline step has succeeded yet—normal during setup until after at least `sources add` and a successful `ingest`. Do not treat that as a broken install by default.
 2. If the user asked to add a feed/source, run `sources add` with a validated JSON object (see `findmejobs sources add --help`) or `sources list` to confirm current sources.
 3. Run `ingest`.
 4. Run `rank`.

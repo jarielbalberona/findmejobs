@@ -100,7 +100,7 @@ Common commands:
 findmejobs doctor
 findmejobs config init
 findmejobs config validate --json
-findmejobs config show-effective --json
+findmejobs config show-effective --json   # canonical profile + app + sources; see "Profile: canonical vs draft"
 findmejobs sources list
 findmejobs sources add --json '<one JSON SourceConfig object>'   # or --json-file path
 findmejobs sources set <name> ...
@@ -108,6 +108,7 @@ findmejobs sources disable <name>
 findmejobs sources remove <name> --yes
 findmejobs ingest
 findmejobs rank
+findmejobs ranking explain --json   # effective ranking policy (ranking.yaml + profile)
 findmejobs review export
 findmejobs review import-results
 findmejobs review import
@@ -160,6 +161,7 @@ Good response shape:
 - `review export`: packets exported
 - `review import-results`: packets imported
 - `digest send` or `digest resend`: digest id, sent/dry-run/failed state, duplicate skip behavior, failures
+- `config show-effective`: whether configs load; summarize `profile` (canonical) at a high level, not a full dump unless the user asks
 - `profile`: import status, missing fields, validation result, promotion status
 - `application`: job id, missing inputs, validation errors, whether OpenClaw draft request files were staged
 - `report`: headline metrics and anomalies
@@ -175,11 +177,34 @@ When handling review:
 - if you see raw HTML, raw source payloads, or artifact dumps in review paths, stop and call it out
 - never tell OpenClaw to "just read the raw page"
 
+## Profile: canonical vs draft
+
+The app distinguishes two profile-related states. Do not conflate them in chat.
+
+**Canonical profile (what ingest/rank/review use after promotion)**  
+- Stored at `config/profile.yaml` (path appears in `config show-effective` under `paths.profile_path`).  
+- **There is no `profile show` command.** Inspect it with `findmejobs config show-effective --json` and read the `profile` object.  
+- Ranking weights and filters live in **`config/ranking.yaml`**, not inside `profile.yaml`. For that policy, use `findmejobs ranking explain --json` when the user cares about scoring rules.
+
+**Draft profile (bootstrap before promotion)**  
+- Lives under `state/profile_bootstrap/` as draft artifacts.  
+- Inspect with `profile show-draft`, gaps with `profile missing`, and gate with `profile validate-draft` / `profile diff`.  
+- If there was never an import, `profile show-draft` may fail until `profile import` has run successfully.
+
+**When the user asks whether a profile is “ready” or “uploaded”**  
+1. Run `config validate --json` (or `doctor`) so config paths load.  
+2. Run `config show-effective --json`: if `profile` looks complete for their goals, canonical profile exists.  
+3. If they are mid-bootstrap, also run `profile show-draft` / `profile missing` / `profile validate-draft` to see draft state before `profile promote-draft`.
+
+**Import is resume bootstrap, not arbitrary JSON**  
+- `profile import --file <path>` ingests a **resume/CV** (e.g. PDF, DOCX, TXT, Markdown, JSON Resume—see project docs), or use `--text` for pasted resume text.  
+- Do **not** tell the user to author a standalone “preferences JSON” file unless they are using a supported format (e.g. JSON Resume) as the import file. Draft fields and gaps are surfaced by `profile missing` and validation.
+
 ## Profile Bootstrap Behavior
 
-For profile bootstrap:
+For profile bootstrap from a resume:
 
-1. Run `profile import --file <path>` or the supported input mode the user requested.
+1. Run `profile import --file <path>` (resume/CV) or `--text` for pasted text, or the supported input mode the user requested.
 2. If OpenClaw later writes a refreshed result file, run `profile import` with no file to refresh the pending import.
 3. Run `profile show-draft`.
 4. Run `profile missing`.

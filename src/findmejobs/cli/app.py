@@ -10,6 +10,8 @@ from typing import Annotated
 import typer
 from typer import Context
 from pydantic import ValidationError
+
+from findmejobs import __version__ as FINDMEJOBS_VERSION
 from sqlalchemy import select
 
 from findmejobs.application.service import ApplicationDraftService
@@ -79,6 +81,29 @@ app.add_typer(reprocess_app, name="reprocess")
 app.add_typer(ranking_app, name="ranking")
 app.add_typer(jobs_app, name="jobs")
 app.add_typer(sources_app, name="sources")
+
+
+def _version_option(value: bool) -> None:
+    if value:
+        typer.echo(FINDMEJOBS_VERSION)
+        raise typer.Exit(0)
+
+
+@app.callback()
+def _root_options(
+    ctx: Context,
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            "-V",
+            callback=_version_option,
+            is_eager=True,
+            help="Show version and exit.",
+        ),
+    ] = False,
+) -> None:
+    pass
 
 
 def _typer_group_show_help_callback(ctx: Context) -> None:

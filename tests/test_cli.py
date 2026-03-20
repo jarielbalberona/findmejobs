@@ -13,6 +13,14 @@ from findmejobs.db.models import JobCluster, JobScore, NormalizedJob, PipelineRu
 from findmejobs.db.session import create_session_factory
 from findmejobs.utils.time import utcnow
 from findmejobs.utils.yamlio import load_yaml
+from findmejobs import __version__ as package_version
+
+
+def test_cli_version_prints_package_version(cli_runner) -> None:
+    for flag in ("--version", "-V"):
+        result = cli_runner.invoke(app, [flag])
+        assert result.exit_code == 0
+        assert result.stdout.strip() == package_version
 
 
 class FakeHttpClient:

@@ -4,6 +4,7 @@ const REFRESH_MS = 60_000;
 const state = {
   data: null,
   jobs: [],
+  selectedJobId: null,
 };
 
 const els = {
@@ -22,6 +23,16 @@ const els = {
   refreshBtn: document.getElementById("refreshBtn"),
   applicationsCards: document.getElementById("applicationsCards"),
   applicationsTable: document.getElementById("applicationsTable"),
+  jobDetailMeta: document.getElementById("jobDetailMeta"),
+  jobDetailGrid: document.getElementById("jobDetailGrid"),
+  coverLetterText: document.getElementById("coverLetterText"),
+  answersText: document.getElementById("answersText"),
+  draftReportText: document.getElementById("draftReportText"),
+  copyCoverLetterBtn: document.getElementById("copyCoverLetterBtn"),
+  copyCoverLetterStatus: document.getElementById("copyCoverLetterStatus"),
+  copyAllCommandsBtn: document.getElementById("copyAllCommandsBtn"),
+  copyCommandsStatus: document.getElementById("copyCommandsStatus"),
+  jobCommandsList: document.getElementById("jobCommandsList"),
   jobSearch: document.getElementById("jobSearch"),
   statusFilter: document.getElementById("statusFilter"),
   sourceFilter: document.getElementById("sourceFilter"),
@@ -81,6 +92,24 @@ function renderKvCard(title, object, keys) {
     .map((k) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(formatValue(object?.[k]))}</dd>`)
     .join("");
   return `<article class="kv"><h3>${escapeHtml(title)}</h3><dl>${rows}</dl></article>`;
+}
+
+function switchTab(name) {
+  document.querySelectorAll(".tab").forEach((el) => el.classList.remove("active"));
+  document.querySelectorAll(".panel").forEach((el) => el.classList.remove("active"));
+  const tab = document.querySelector(`.tab[data-tab="${name}"]`);
+  const panel = document.querySelector(`.panel[data-panel="${name}"]`);
+  if (tab) tab.classList.add("active");
+  if (panel) panel.classList.add("active");
+}
+
+function jobsById() {
+  return new Map((state.jobs || []).map((job) => [job.job_id, job]));
+}
+
+function applicationByJobId() {
+  const apps = state.data?.application?.applications || [];
+  return new Map(apps.map((app) => [app.job_id, app]));
 }
 
 function renderOverview(data) {
@@ -257,7 +286,7 @@ function renderApplications(data) {
     .map(
       (app) => `
       <tr>
-        <td>${escapeHtml(app.job_id || "-")}</td>
+        <td><button class="linkish js-view-job" data-job-id="${escapeHtml(app.job_id || "")}" type="button">${escapeHtml(app.job_id || "-")}</button></td>
         <td>${escapeHtml(app.company_name || "-")}</td>
         <td>${escapeHtml(app.role_title || "-")}</td>
         <td>${escapeHtml(app.source_name || "-")}</td>
@@ -284,6 +313,90 @@ function renderApplications(data) {
         <tbody>${body || '<tr><td colspan="11">No application state found under state/applications yet.</td></tr>'}</tbody>
       </table>
     </div>`;
+}
+
+function buildApplicationCommands(jobId) {
+  const paths = state.data?.config?.paths || {};
+  const appConfigPath = paths.app_config_path || "config/app.toml";
+  const profilePath = paths.profile_path || "config/profile.yaml";
+  const sourcesPath = paths.sources_path || "config/sources.yaml";
+  const quotedJob = JSON.stringify(jobId);
+  const base = `--app-config-path ${JSON.stringify(appConfigPath)} --profile-path ${JSON.stringify(profilePath)} --sources-path ${JSON.stringify(
+    sourcesPath,
+  )}`;
+  return [
+    `./.venv/bin/findmejobs prepare-application --job-id ${quotedJob} ${base}`,
+    `./.venv/bin/findmejobs draft-cover-letter --job-id ${quotedJob} ${base}`,
+    `./.venv/bin/findmejobs draft-answers --job-id ${quotedJob} ${base}`,
+    `./.venv/bin/findmejobs show-application --job-id ${quotedJob}`,
+    `./.venv/bin/findmejobs validate-application --job-id ${quotedJob} ${base}`,
+    `./.venv/bin/findmejobs regenerate-application --job-id ${quotedJob} ${base}`,
+  ];
+}
+
+function renderCommandList(jobId) {
+  const commands = buildApplicationCommands(jobId);
+  const rows = commands
+    .map(
+      (cmd, idx) =>
+        `<div class="cmd-row"><code>${escapeHtml(cmd)}</code><button type="button" class="js-copy-cmd" data-cmd-idx="${idx}">Copy</button></div>`,
+    )
+    .join("");
+  els.jobCommandsList.innerHTML = `<div class="cmd-list">${rows}</div>`;
+  els.jobCommandsList.setAttribute("data-commands", JSON.stringify(commands));
+  els.copyCommandsStatus.textContent = "";
+}
+
+function renderJobDetail(jobId) {
+  state.selectedJobId = jobId;
+  const job = jobsById().get(jobId);
+  const app = applicationByJobId().get(jobId);
+
+  if (!job && !app) {
+    els.jobDetailMeta.textContent = `No detail found for job_id=${jobId}`;
+    els.jobDetailGrid.innerHTML = "";
+    els.coverLetterText.value = "";
+    els.answersText.value = "";
+    els.draftReportText.value = "";
+    els.jobCommandsList.innerHTML = "";
+    els.jobCommandsList.removeAttribute("data-commands");
+    return;
+  }
+
+  const bits = [jobId];
+  if (job?.status) bits.push(`status=${job.status}`);
+  if (job?.score !== undefined) bits.push(`score=${job.score}`);
+  els.jobDetailMeta.textContent = bits.join(" | ");
+
+  const summaryLeft = {
+    title: job?.title || app?.role_title || "-",
+    company: job?.company_name || app?.company_name || "-",
+    source: job?.source || app?.source_name || "-",
+    location: job?.location_text || app?.packet_summary?.location_text || "-",
+    status: job?.status || "-",
+    score: job?.score ?? app?.packet_summary?.score_total ?? "-",
+    canonical_url: job?.canonical_url || app?.packet_summary?.canonical_url || "-",
+    matched_signals: job?.matched_signals || app?.packet_summary?.matched_signals || [],
+  };
+
+  const summaryRight = {
+    prepared: app?.prepared ?? false,
+    questions_count: app?.questions_count ?? app?.packet_summary?.application_questions?.length ?? 0,
+    missing_inputs_count: app?.missing_inputs_count ?? 0,
+    openclaw_status: app?.openclaw?.status ?? "-",
+    cover_letter_ready: app?.cover_letter?.ready ?? false,
+    answers_ready: app?.answers?.ready ?? false,
+  };
+
+  els.jobDetailGrid.innerHTML = [
+    renderKvCard("Job", summaryLeft, Object.keys(summaryLeft)),
+    renderKvCard("Application Helper", summaryRight, Object.keys(summaryRight)),
+  ].join("");
+
+  els.coverLetterText.value = app?.cover_letter?.text || "";
+  els.answersText.value = app?.answers?.text || "";
+  els.draftReportText.value = app?.draft_report_text || app?.missing_inputs_text || "";
+  renderCommandList(jobId);
 }
 
 function applyJobFilters() {
@@ -328,7 +441,10 @@ function applyJobFilters() {
         <td>${escapeHtml(job.source || "-")}</td>
         <td>${escapeHtml((job.matched_signals || []).join(", ") || "-")}</td>
         <td>${escapeHtml((job.tags || []).join(", ") || "-")}</td>
-        <td>${job.canonical_url ? `<a href="${escapeHtml(job.canonical_url)}" target="_blank" rel="noreferrer">open</a>` : "-"}</td>
+        <td>
+          <button class="linkish js-view-job" data-job-id="${escapeHtml(job.job_id)}" type="button">details</button>
+          ${job.canonical_url ? ` | <a href="${escapeHtml(job.canonical_url)}" target="_blank" rel="noreferrer">open</a>` : ""}
+        </td>
       </tr>`,
     )
     .join("");
@@ -339,7 +455,7 @@ function applyJobFilters() {
         <thead>
           <tr>
             <th>Title</th><th>Company</th><th>Location</th><th>Score</th><th>Status</th><th>Source</th>
-            <th>Signals</th><th>Tags</th><th>URL</th>
+            <th>Signals</th><th>Tags</th><th>Actions</th>
           </tr>
         </thead>
         <tbody>${rows || '<tr><td colspan="9">No jobs match current filters.</td></tr>'}</tbody>
@@ -372,6 +488,9 @@ async function loadAll() {
     renderSources(state.data);
     renderJobs(state.data);
     renderApplications(state.data);
+    if (state.selectedJobId) {
+      renderJobDetail(state.selectedJobId);
+    }
   } catch (err) {
     showError(
       `Failed to load snapshot data from ${DATA_BASE}. Run scripts/export_ui_data.sh and serve this repo root (not file://). Error: ${err.message}`,
@@ -383,14 +502,7 @@ function bindTabs() {
   document.getElementById("tabs").addEventListener("click", (evt) => {
     const btn = evt.target.closest("button[data-tab]");
     if (!btn) return;
-    const name = btn.dataset.tab;
-
-    document.querySelectorAll(".tab").forEach((el) => el.classList.remove("active"));
-    document.querySelectorAll(".panel").forEach((el) => el.classList.remove("active"));
-
-    btn.classList.add("active");
-    const panel = document.querySelector(`.panel[data-panel="${name}"]`);
-    if (panel) panel.classList.add("active");
+    switchTab(btn.dataset.tab);
   });
 }
 
@@ -401,6 +513,65 @@ function bindFilters() {
   });
 
   els.refreshBtn.addEventListener("click", loadAll);
+
+  document.body.addEventListener("click", (evt) => {
+    const btn = evt.target.closest(".js-view-job");
+    if (!btn) return;
+    const jobId = btn.getAttribute("data-job-id");
+    if (!jobId) return;
+    renderJobDetail(jobId);
+    switchTab("job-detail");
+  });
+
+  document.body.addEventListener("click", async (evt) => {
+    const btn = evt.target.closest(".js-copy-cmd");
+    if (!btn) return;
+    const raw = els.jobCommandsList.getAttribute("data-commands");
+    if (!raw) return;
+    const cmds = JSON.parse(raw);
+    const idx = Number(btn.getAttribute("data-cmd-idx"));
+    const value = cmds[idx] || "";
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      els.copyCommandsStatus.textContent = "Command copied.";
+    } catch (_err) {
+      els.copyCommandsStatus.textContent = "Copy failed.";
+    }
+  });
+
+  els.copyCoverLetterBtn.addEventListener("click", async () => {
+    const text = els.coverLetterText.value || "";
+    if (!text.trim()) {
+      els.copyCoverLetterStatus.textContent = "No cover letter to copy.";
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      els.copyCoverLetterStatus.textContent = "Copied.";
+    } catch (_err) {
+      els.copyCoverLetterStatus.textContent = "Copy failed.";
+    }
+  });
+
+  els.copyAllCommandsBtn.addEventListener("click", async () => {
+    const raw = els.jobCommandsList.getAttribute("data-commands");
+    if (!raw) {
+      els.copyCommandsStatus.textContent = "No commands yet.";
+      return;
+    }
+    const cmds = JSON.parse(raw);
+    if (!Array.isArray(cmds) || !cmds.length) {
+      els.copyCommandsStatus.textContent = "No commands yet.";
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(cmds.join("\n"));
+      els.copyCommandsStatus.textContent = "All commands copied.";
+    } catch (_err) {
+      els.copyCommandsStatus.textContent = "Copy failed.";
+    }
+  });
 }
 
 function init() {

@@ -16,6 +16,15 @@ def _read_json(path: Path) -> dict | None:
         return None
 
 
+def _read_text(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
 def _count_missing_inputs(path: Path) -> int:
     if not path.exists():
         return 0
@@ -37,6 +46,10 @@ def _job_entry(job_root: Path) -> dict:
     packet = _read_json(packet_path) or {}
     cover_meta = _read_json(cover_meta_path) or {}
     answers_meta = _read_json(answers_meta_path) or {}
+    cover_letter_text = _read_text(job_root / "cover_letter.draft.md")
+    answers_text = _read_text(job_root / "answers.draft.yaml")
+    missing_inputs_text = _read_text(missing_inputs_path)
+    draft_report_text = _read_text(draft_report_path)
 
     openclaw_requests = {
         "cover_letter_request": (openclaw_dir / "cover_letter.request.json").exists(),
@@ -68,12 +81,25 @@ def _job_entry(job_root: Path) -> dict:
             "ready": cover_meta_path.exists(),
             "origin": cover_meta.get("origin"),
             "created_at": cover_meta.get("created_at"),
+            "text": cover_letter_text,
         },
         "answers": {
             "ready": answers_meta_path.exists(),
             "origin": answers_meta.get("origin"),
             "created_at": answers_meta.get("created_at"),
             "answer_count": answers_meta.get("answer_count"),
+            "text": answers_text,
+        },
+        "missing_inputs_text": missing_inputs_text,
+        "draft_report_text": draft_report_text,
+        "packet_summary": {
+            "cluster_id": packet.get("cluster_id"),
+            "canonical_url": (packet.get("canonical_job") or {}).get("canonical_url"),
+            "location_text": (packet.get("canonical_job") or {}).get("location_text"),
+            "description_excerpt": (packet.get("canonical_job") or {}).get("description_excerpt"),
+            "matched_signals": (packet.get("score") or {}).get("matched_signals") or [],
+            "score_total": (packet.get("score") or {}).get("total"),
+            "application_questions": packet.get("application_questions") or [],
         },
         "openclaw": {
             "status": openclaw_status,

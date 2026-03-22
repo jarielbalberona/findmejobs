@@ -25,6 +25,7 @@
       <button class="tab" data-tab="sources" type="button">Sources</button>
       <button class="tab" data-tab="jobs" type="button">Jobs</button>
       <button class="tab" data-tab="applications" type="button">Application Helper</button>
+      <button class="tab" data-tab="job-detail" type="button">Job Detail</button>
     </nav>
 
     <main class="layout">
@@ -85,6 +86,32 @@
         <h2>Application Helper</h2>
         <div id="applicationsCards" class="cards"></div>
         <div id="applicationsTable"></div>
+      </section>
+
+      <section class="panel" data-panel="job-detail">
+        <h2>Job Detail</h2>
+        <div id="jobDetailMeta" class="muted">Select a job from Jobs or Application Helper.</div>
+        <div id="jobDetailGrid" class="grid-two"></div>
+
+        <h3>Cover Letter</h3>
+        <div class="detail-actions">
+          <button id="copyCoverLetterBtn" type="button">Copy Cover Letter</button>
+          <span id="copyCoverLetterStatus" class="muted"></span>
+        </div>
+        <textarea id="coverLetterText" class="detail-text" readonly placeholder="No cover letter draft yet."></textarea>
+
+        <h3>Answers Draft</h3>
+        <textarea id="answersText" class="detail-text" readonly placeholder="No answers draft yet."></textarea>
+
+        <h3>Draft Report</h3>
+        <textarea id="draftReportText" class="detail-text" readonly placeholder="No draft report yet."></textarea>
+
+        <h3>Application Helper Commands</h3>
+        <div class="detail-actions">
+          <button id="copyAllCommandsBtn" type="button">Copy All Commands</button>
+          <span id="copyCommandsStatus" class="muted"></span>
+        </div>
+        <div id="jobCommandsList"></div>
       </section>
     </main>
 

@@ -32,6 +32,13 @@ Open:
 
 The page fetches data from `/var/ui-data/*.json`.
 
+Use **Jobs** or **Application Helper** table `details` links to open **Job Detail**:
+- job summary + application helper readiness
+- cover letter draft
+- answers draft
+- draft report / missing inputs
+- one-click **Copy Cover Letter**
+
 ## 3) Refresh data after pipeline changes
 
 Re-run:

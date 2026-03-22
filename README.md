@@ -2,7 +2,7 @@
 
 `findmejobs` is a single-host Python job intelligence pipeline.
 
-It fetches jobs from predictable public sources, stores raw payloads, normalizes them into one canonical model, deduplicates, ranks them deterministically against your profile, exports sanitized review packets for OpenClaw, and sends a digest of reviewed jobs.
+It fetches jobs from predictable public sources, stores raw payloads, normalizes them into one canonical model, deduplicates, ranks them deterministically against your profile, and exports sanitized review packets for OpenClaw/UI consumption.
 
 This repo is the system of record. OpenClaw is an assistant around profile bootstrap, review, and bounded drafting. It is not the raw scraper.
 
@@ -49,7 +49,7 @@ If you skip this and start tuning ranking first, you are wasting time.
 - Deduplicates with layered exact matching
 - Ranks deterministically with explainable rules
 - Exports sanitized review packets to OpenClaw
-- Imports review results and sends deterministic digests
+- Imports review results and optionally sends deterministic digests
 - Supports rerank and reprocess flows without unsafe hidden state
 
 ## Out of scope
@@ -91,8 +91,10 @@ Key files:
 - `config/ranking.yaml` — canonical promoted ranking config
 - `config/sources.yaml` — enabled sources
 
-Delivery secret:
+Delivery secret (only if you use email):
 - SMTP password is env-only: set `FINDMEJOBS_SMTP_PASSWORD` when email auth is needed.
+
+If you do not use email delivery, keep `delivery.email.enabled = false` in `config/app.toml` and skip all `digest` commands.
 
 Minimal source example:
 
@@ -129,9 +131,10 @@ Source trust is not equal:
 findmejobs doctor
 findmejobs ingest
 findmejobs rank
+./scripts/export_ui_data.sh
+findmejobs jobs list --limit 100
 findmejobs review export
 findmejobs review import
-findmejobs digest send
 findmejobs report
 ```
 
@@ -139,16 +142,22 @@ Useful variants:
 
 ```bash
 findmejobs ingest --source greenhouse
-findmejobs digest send --dry-run
-findmejobs digest resend --digest-date 2026-03-19
 findmejobs ranking explain
 findmejobs ranking set --minimum-score 40 --stale-days 45 --add-blocked-company "Bad Co"
 findmejobs jobs list
 findmejobs jobs list --all-scored --limit 100
 findmejobs jobs list --json | jq '.jobs[:5]'
+./scripts/export_ui_data.sh
 findmejobs sources list --json
 findmejobs sources add --json '{"name":"my-feed","kind":"rss","feed_url":"https://example.com/jobs.rss"}'
 findmejobs config show-effective --json
+```
+
+Optional email-only variants:
+
+```bash
+findmejobs digest send --dry-run
+findmejobs digest resend --digest-date 2026-03-19
 ```
 
 ## Core commands
@@ -167,8 +176,9 @@ findmejobs config show-effective --json
 - `findmejobs ranking set` — patch scalar/list/weights/title-family fields in `config/ranking.yaml`
 - `findmejobs profile set` — patch canonical profile fields/lists in `config/profile.yaml`
 - `findmejobs jobs list` — print ranked job previews (title, score, tags, matched signals, description snippet); add `--all-scored` for hard-filtered / below-threshold rows, `--json` for machine-readable output (same filters as text—combine `--json` with `--all-scored` when you want every scored row)
+- `./scripts/export_ui_data.sh` — export UI files under `var/ui-data/` (including `jobs.json` used by the Jobs tab)
 - `findmejobs report` — print operational summary
-- `findmejobs review export` — write sanitized review packets
+- `findmejobs review export` — write sanitized review packets to the configured review outbox (OpenClaw review flow, separate from UI Jobs tab data)
 - `findmejobs review import` — import review results
 - `findmejobs digest send [--dry-run]` — build or send daily digest
 - `findmejobs digest resend --digest-date YYYY-MM-DD [--dry-run]` — rebuild and resend a prior digest
@@ -310,9 +320,10 @@ sudo systemctl enable --now findmejobs-ingest.timer
 sudo systemctl enable --now findmejobs-rank.timer
 sudo systemctl enable --now findmejobs-review-export.timer
 sudo systemctl enable --now findmejobs-review-import.timer
-sudo systemctl enable --now findmejobs-digest.timer
 sudo systemctl enable --now findmejobs-doctor.timer
 ```
+
+If email delivery is disabled, skip `findmejobs-digest.timer`.
 
 ## Tests
 

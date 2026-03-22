@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import subprocess
 from collections import Counter
 import shutil
 from pathlib import Path
@@ -149,6 +151,49 @@ def _emit_json(json_out: bool, payload: dict, text: str | None = None) -> None:
         return
     if text is not None:
         typer.echo(text)
+
+
+def _run_ui_data_export_script(app_config_path: Path) -> dict[str, object]:
+    env_script = os.getenv("FINDMEJOBS_UI_EXPORT_SCRIPT")
+    script_candidates: list[Path] = []
+    if env_script:
+        script_candidates.append(Path(env_script).expanduser())
+    script_candidates.append(Path.cwd() / "scripts" / "export_ui_data.sh")
+    script_candidates.append(app_config_path.resolve().parent.parent / "scripts" / "export_ui_data.sh")
+
+    script_path: Path | None = next((candidate for candidate in script_candidates if candidate.exists()), None)
+    if script_path is None:
+        return {
+            "status": "skipped",
+            "message": (
+                "ui data export skipped: scripts/export_ui_data.sh not found "
+                "(checked FINDMEJOBS_UI_EXPORT_SCRIPT, cwd/scripts, and app-config-root/scripts)"
+            ),
+            "script_path": None,
+        }
+
+    result = subprocess.run(
+        [str(script_path)],
+        cwd=str(script_path.parent.parent),
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        stdout = result.stdout.strip()
+        detail = stderr or stdout or f"exit_code={result.returncode}"
+        return {
+            "status": "failed",
+            "message": f"ui data export failed: {detail}",
+            "script_path": str(script_path),
+        }
+
+    out = result.stdout.strip()
+    return {
+        "status": "ok",
+        "message": out or "ui data export complete",
+        "script_path": str(script_path),
+    }
 
 
 def _pipeline_lock_path(app_config) -> Path:
@@ -377,6 +422,11 @@ def rank(
     app_config_path: Path = typer.Option(Path("config/app.toml"), exists=True),
     profile_path: Path = typer.Option(Path("config/profile.yaml")),
     sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
+    export_ui_data: bool = typer.Option(
+        True,
+        "--export-ui-data/--no-export-ui-data",
+        help="Run scripts/export_ui_data.sh after successful rank (default: on).",
+    ),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
     app_config, profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_path)
@@ -424,6 +474,8 @@ def rank(
                     "filtered": filtered,
                     "hard_filter_reason_counts": dict(sorted(hard_filter_hits.items())),
                 }
+                if export_ui_data:
+                    payload["ui_export"] = _run_ui_data_export_script(app_config_path)
                 if json_out:
                     typer.echo(json.dumps(payload, indent=2))
                 else:
@@ -434,6 +486,12 @@ def rank(
                             "hard filter reasons (hits; a job with multiple reasons adds to each): "
                             + parts
                         )
+                    if export_ui_data:
+                        ui_export = payload.get("ui_export", {})
+                        if ui_export.get("status") == "ok":
+                            typer.echo(f"ui export: {ui_export.get('message')}")
+                        else:
+                            typer.echo(f"warning: {ui_export.get('message')}")
             except typer.Exit:
                 raise
             except Exception as exc:

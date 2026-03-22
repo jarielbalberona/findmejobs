@@ -1,6 +1,6 @@
 name = "smartrecruiters-career-sites-direct"
 kind = "direct_page"
-enabled = false
+enabled = true
 priority = 5
 trust_weight = 0.8
 page_url = "https://jobs.smartrecruiters.com/smartrecruiters/744000106292088-senior-product-manager-career-sites-"

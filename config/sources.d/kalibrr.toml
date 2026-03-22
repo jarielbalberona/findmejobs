@@ -4,7 +4,7 @@
 # the adapter is updated to the transport you actually observe and validate.
 name = "zk-tech-kalibrr"
 kind = "kalibrr"
-enabled = false
+enabled = true
 priority = 6
 trust_weight = 0.75
 fetch_cap = 50

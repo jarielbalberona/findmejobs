@@ -3,7 +3,7 @@
 # so keep it disabled until you confirm and lock the current transport URL and shape.
 name = "foundit-ph"
 kind = "foundit_ph"
-enabled = false
+enabled = true
 priority = 5
 trust_weight = 0.7
 fetch_cap = 50

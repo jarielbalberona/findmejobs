@@ -3,7 +3,7 @@
 # Treat this as brittle board plumbing, not a clean public ATS API.
 name = "jobstreet-ph"
 kind = "jobstreet_ph"
-enabled = false
+enabled = true
 priority = 5
 trust_weight = 0.7
 fetch_cap = 50

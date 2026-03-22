@@ -255,6 +255,34 @@ th {
   margin-bottom: 1rem;
 }
 
+.detail-rich {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  padding: 0.75rem;
+  margin-bottom: 1rem;
+  max-height: 540px;
+  overflow: auto;
+  line-height: 1.45;
+  font-size: 0.9rem;
+}
+
+.detail-rich p {
+  margin: 0 0 0.75rem;
+}
+
+.detail-rich ul,
+.detail-rich ol {
+  margin: 0 0 0.75rem 1.1rem;
+}
+
+.detail-rich h1,
+.detail-rich h2,
+.detail-rich h3,
+.detail-rich h4 {
+  margin: 0.75rem 0 0.5rem;
+}
+
 .cmd-list {
   display: grid;
   gap: 0.5rem;

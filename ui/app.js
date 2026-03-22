@@ -29,7 +29,7 @@ const els = {
   coverLetterText: document.getElementById("coverLetterText"),
   answersText: document.getElementById("answersText"),
   draftReportText: document.getElementById("draftReportText"),
-  jobDescriptionText: document.getElementById("jobDescriptionText"),
+  jobDescriptionHtml: document.getElementById("jobDescriptionHtml"),
   copyCoverLetterBtn: document.getElementById("copyCoverLetterBtn"),
   copyCoverLetterStatus: document.getElementById("copyCoverLetterStatus"),
   copyAllCommandsBtn: document.getElementById("copyAllCommandsBtn"),
@@ -79,6 +79,51 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function sanitizeHtml(html) {
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  const blocked = new Set(["script", "style", "iframe", "object", "embed", "link", "meta"]);
+  const walker = document.createTreeWalker(template.content, NodeFilter.SHOW_ELEMENT);
+  const toRemove = [];
+  while (walker.nextNode()) {
+    const el = walker.currentNode;
+    const tag = el.tagName.toLowerCase();
+    if (blocked.has(tag)) {
+      toRemove.push(el);
+      continue;
+    }
+    for (const attr of [...el.attributes]) {
+      const name = attr.name.toLowerCase();
+      const value = attr.value || "";
+      if (name.startsWith("on")) {
+        el.removeAttribute(attr.name);
+        continue;
+      }
+      if ((name === "href" || name === "src") && value.trim().toLowerCase().startsWith("javascript:")) {
+        el.removeAttribute(attr.name);
+      }
+    }
+  }
+  for (const node of toRemove) node.remove();
+  return template.innerHTML;
+}
+
+function renderDescriptionHtml(raw) {
+  const text = raw || "";
+  if (!text.trim()) {
+    return `<p class="muted">No job description available.</p>`;
+  }
+  const hasHtml = /<\s*[a-z][\s\S]*>/i.test(text);
+  if (hasHtml) {
+    return sanitizeHtml(text);
+  }
+  // Plain text fallback: keep paragraphs readable.
+  return text
+    .split(/\n{2,}/)
+    .map((part) => `<p>${escapeHtml(part).replaceAll("\n", "<br>")}</p>`)
+    .join("");
 }
 
 function formatValue(v) {
@@ -360,7 +405,7 @@ function renderJobDetail(jobId) {
     els.coverLetterText.value = "";
     els.answersText.value = "";
     els.draftReportText.value = "";
-    els.jobDescriptionText.value = "";
+    els.jobDescriptionHtml.innerHTML = `<p class="muted">No job description available.</p>`;
     els.jobCommandsList.innerHTML = "";
     els.jobCommandsList.removeAttribute("data-commands");
     return;
@@ -418,7 +463,8 @@ function renderJobDetail(jobId) {
   els.coverLetterText.value = app?.cover_letter?.text || "";
   els.answersText.value = app?.answers?.text || "";
   els.draftReportText.value = app?.draft_report_text || app?.missing_inputs_text || "";
-  els.jobDescriptionText.value = detail?.description_text || app?.packet_summary?.description_excerpt || job?.description_snippet || "";
+  const description = detail?.description_text || app?.packet_summary?.description_excerpt || job?.description_snippet || "";
+  els.jobDescriptionHtml.innerHTML = renderDescriptionHtml(description);
   renderCommandList(jobId);
 }
 

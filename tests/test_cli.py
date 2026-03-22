@@ -9,7 +9,22 @@ from sqlalchemy import func, select
 
 from findmejobs.cli.app import app
 from findmejobs.config.loader import load_app_config, load_profile_config, load_source_configs
-from findmejobs.db.models import JobCluster, JobScore, NormalizedJob, PipelineRun, Profile, RankModel, RawDocument, Source, SourceFetchRun, SourceJob
+from findmejobs.db.models import (
+    ApplicationSubmission,
+    DeliveryEvent,
+    JobCluster,
+    JobClusterMember,
+    JobFeedback,
+    JobScore,
+    NormalizedJob,
+    PipelineRun,
+    Profile,
+    RankModel,
+    RawDocument,
+    Source,
+    SourceFetchRun,
+    SourceJob,
+)
 from findmejobs.db.session import create_session_factory
 from findmejobs.utils.time import utcnow
 from findmejobs.utils.yamlio import load_yaml
@@ -150,6 +165,17 @@ def _seed_cluster(
     session.add(job)
     session.flush()
     session.add(cluster)
+    session.flush()
+    session.add(
+        JobClusterMember(
+            id=f"member-{cluster_id}",
+            cluster_id=cluster_id,
+            normalized_job_id=normalized_job_id,
+            match_rule="canonical_url",
+            match_score=1.0,
+            is_representative=True,
+        )
+    )
 
 
 def test_ingest_command_works_for_one_source(
@@ -362,6 +388,10 @@ def test_rank_command_only_scores_valid_jobs(
     assert result.exit_code == 0
     with session_factory() as session:
         assert session.scalar(select(func.count()).select_from(JobScore)) == 1
+        run = session.scalar(select(PipelineRun).where(PipelineRun.command == "rank"))
+        assert run is not None
+        assert run.stats_json["total_scored"] == 1
+        assert run.stats_json["model_version"] == profile_config.rank_model_version
 
 
 def test_jobs_list_shows_eligible_ranked_jobs(
@@ -695,7 +725,7 @@ def test_review_command_only_exports_sanitized_packets(
 
 
 def test_cli_command_groups_show_help_when_no_subcommand(cli_runner) -> None:
-    for group in ("review", "profile", "ranking", "digest", "feedback", "reprocess", "jobs", "sources"):
+    for group in ("review", "profile", "ranking", "digest", "feedback", "reprocess", "jobs", "sources", "submissions"):
         result = cli_runner.invoke(app, [group])
         assert result.exit_code == 0
         out = result.stdout + result.stderr
@@ -1332,3 +1362,185 @@ def test_critical_commands_emit_parseable_json(
     digest_resend_payload = json.loads(digest_resend_result.stdout)
     assert digest_resend_payload["command"] == "digest_resend"
     assert digest_resend_payload["status"] == "ok"
+
+
+def test_ranking_audit_command_supports_pass_and_fail(cli_runner, tmp_path: Path) -> None:
+    baseline = cli_runner.invoke(app, ["ranking", "audit", "--fixture", "baseline", "--json"])
+    assert baseline.exit_code == 0
+    payload = json.loads(baseline.stdout)
+    assert payload["command"] == "ranking_audit"
+    assert payload["status"] == "ok"
+
+    failing_fixture = tmp_path / "ranking-audit-fail.json"
+    failing_fixture.write_text(
+        json.dumps(
+            {
+                "profile": {
+                    "version": "x",
+                    "target_titles": ["Backend Engineer"],
+                    "required_skills": ["Python"],
+                },
+                "jobs": [
+                    {
+                        "source_job_id": "job-x",
+                        "source_id": "src",
+                        "source_job_key": "x",
+                        "company_name": "Example",
+                        "title": "Backend Engineer",
+                        "first_seen_at": "2026-03-22T00:00:00+00:00",
+                        "last_seen_at": "2026-03-22T00:00:00+00:00"
+                    }
+                ],
+                "expected": {
+                    "ordered_job_ids": ["job-y"]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    failed = cli_runner.invoke(app, ["ranking", "audit", "--fixture", str(failing_fixture), "--json"])
+    assert failed.exit_code == 1
+    failed_payload = json.loads(failed.stdout)
+    assert failed_payload["status"] == "failed"
+    assert any(item.startswith("order_mismatch:") for item in failed_payload["errors"])
+
+
+def test_doctor_strict_surfaces_quality_gate_failures(
+    cli_runner,
+    migrated_runtime_config_files: tuple[Path, Path, Path],
+) -> None:
+    app_path, profile_path, sources_path = migrated_runtime_config_files
+    app_text = app_path.read_text(encoding="utf-8")
+    app_text += "\n[quality]\nmax_delivery_failures_24h = 0\n"
+    app_path.write_text(app_text, encoding="utf-8")
+
+    app_config = load_app_config(app_path)
+    session_factory = create_session_factory(app_config.database.url)
+    with session_factory() as session:
+        session.add(
+            DeliveryEvent(
+                id="del-fail-1",
+                digest_id=None,
+                channel="email",
+                status="failed",
+                attempt=1,
+                provider_message_id=None,
+                error_message="smtp timeout",
+                metadata_json={},
+                created_at=utcnow(),
+            )
+        )
+        session.commit()
+
+    result = cli_runner.invoke(
+        app,
+        [
+            "doctor",
+            "--strict",
+            "--json",
+            "--app-config-path",
+            str(app_path),
+            "--profile-path",
+            str(profile_path),
+            "--sources-path",
+            str(sources_path),
+        ],
+    )
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert any(str(item).startswith("quality_gate_failed:max_delivery_failures_24h") for item in payload["errors"])
+
+
+def test_submissions_commands_record_update_list_and_feedback(
+    cli_runner,
+    migrated_runtime_config_files: tuple[Path, Path, Path],
+) -> None:
+    app_path, profile_path, sources_path = migrated_runtime_config_files
+    app_config = load_app_config(app_path)
+    session_factory = create_session_factory(app_config.database.url)
+    with session_factory() as session:
+        _seed_cluster(
+            session,
+            source_id="source-submission",
+            source_name="submission",
+            source_job_key="job-submission",
+            normalized_job_id="job-submission",
+            cluster_id="cluster-submission",
+            title="Backend Engineer",
+            company="Example",
+            location_text="Remote, Philippines",
+            location_type="remote",
+            description_text="Python SQL",
+            normalization_status="valid",
+        )
+        session.commit()
+
+    record = cli_runner.invoke(
+        app,
+        [
+            "submissions",
+            "record",
+            "--job-id",
+            "job-submission",
+            "--status",
+            "submitted",
+            "--channel",
+            "manual_portal",
+            "--app-config-path",
+            str(app_path),
+            "--profile-path",
+            str(profile_path),
+            "--sources-path",
+            str(sources_path),
+        ],
+    )
+    assert record.exit_code == 0
+
+    with session_factory() as session:
+        submission = session.scalar(select(ApplicationSubmission).where(ApplicationSubmission.job_id == "job-submission"))
+        assert submission is not None
+        update = cli_runner.invoke(
+            app,
+            [
+                "submissions",
+                "update",
+                "--id",
+                submission.id,
+                "--status",
+                "interview",
+                "--app-config-path",
+                str(app_path),
+                "--profile-path",
+                str(profile_path),
+                "--sources-path",
+                str(sources_path),
+            ],
+        )
+        assert update.exit_code == 0
+
+    listed = cli_runner.invoke(
+        app,
+        [
+            "submissions",
+            "list",
+            "--json",
+            "--app-config-path",
+            str(app_path),
+            "--profile-path",
+            str(profile_path),
+            "--sources-path",
+            str(sources_path),
+        ],
+    )
+    assert listed.exit_code == 0
+    listing = json.loads(listed.stdout)
+    assert listing["count"] == 1
+    assert listing["items"][0]["status"] == "interview"
+
+    with session_factory() as session:
+        feedback_types = set(
+            session.scalars(
+                select(JobFeedback.feedback_type).where(JobFeedback.cluster_id == "cluster-submission")
+            ).all()
+        )
+        assert {"applied", "interview"} <= feedback_types

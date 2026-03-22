@@ -53,12 +53,20 @@ class DeliveryConfig(BaseModel):
     email: EmailDeliveryConfig = Field(default_factory=EmailDeliveryConfig)
 
 
+class QualityConfig(BaseModel):
+    max_parse_error_rate: float = Field(default=0.25, ge=0.0, le=1.0)
+    max_skip_ratio_tier_b: float = Field(default=0.35, ge=0.0, le=1.0)
+    max_failed_sources_per_run: int = Field(default=3, ge=0)
+    max_delivery_failures_24h: int = Field(default=3, ge=0)
+
+
 class AppConfig(BaseModel):
     database: DatabaseConfig
     storage: StorageConfig
     http: HttpConfig = Field(default_factory=HttpConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     delivery: DeliveryConfig = Field(default_factory=DeliveryConfig)
+    quality: QualityConfig = Field(default_factory=QualityConfig)
 
 
 class SourceBaseConfig(BaseModel):

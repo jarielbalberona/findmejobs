@@ -1,0 +1,90 @@
+{
+  "profile": {
+    "version": "audit-profile-v1",
+    "rank_model_version": "audit-model-v1",
+    "target_titles": ["Backend Engineer", "Platform Engineer"],
+    "required_skills": ["Python", "SQL"],
+    "preferred_skills": ["FastAPI", "AWS"],
+    "preferred_locations": ["Remote", "Philippines"],
+    "allowed_countries": ["PH", "SG"],
+    "ranking": {
+      "stale_days": 30,
+      "minimum_score": 45.0,
+      "minimum_salary": null,
+      "blocked_companies": [],
+      "blocked_title_keywords": [],
+      "require_remote": false,
+      "remote_first": true,
+      "allowed_countries": ["PH", "SG"],
+      "allowed_companies": [],
+      "preferred_companies": ["Example"],
+      "preferred_timezones": ["Asia/Manila"],
+      "title_families": {
+        "Backend Engineer": ["Software Engineer", "Backend Developer"],
+        "Platform Engineer": ["Infrastructure Engineer"]
+      },
+      "weights": {
+        "title_alignment": 30.0,
+        "title_family": 10.0,
+        "must_have_skills": 35.0,
+        "preferred_skills": 10.0,
+        "location_fit": 10.0,
+        "remote_fit": 10.0,
+        "recency": 5.0,
+        "company_preference": 5.0,
+        "timezone_fit": 5.0,
+        "source_trust": 5.0,
+        "feedback_signal": 5.0
+      }
+    }
+  },
+  "jobs": [
+    {
+      "source_job_id": "job-a",
+      "source_id": "src-a",
+      "source_job_key": "a",
+      "source_name": "greenhouse",
+      "source_trust_weight": 1.4,
+      "company_name": "Example",
+      "title": "Senior Backend Engineer",
+      "location_text": "Remote, Philippines",
+      "location_type": "remote",
+      "country_code": "PH",
+      "description_text": "Build APIs with Python SQL FastAPI AWS",
+      "tags": ["python", "sql", "fastapi", "aws"],
+      "first_seen_at": "2026-03-20T00:00:00+00:00",
+      "last_seen_at": "2026-03-22T00:00:00+00:00",
+      "posted_at": "2026-03-21T00:00:00+00:00",
+      "feedback_types": ["relevant"]
+    },
+    {
+      "source_job_id": "job-b",
+      "source_id": "src-b",
+      "source_job_key": "b",
+      "source_name": "jobstreet_ph",
+      "source_trust_weight": 0.7,
+      "company_name": "Other Co",
+      "title": "Frontend Engineer",
+      "location_text": "Makati, Philippines",
+      "location_type": "onsite",
+      "country_code": "PH",
+      "description_text": "React CSS UI",
+      "tags": ["react", "css"],
+      "first_seen_at": "2026-03-18T00:00:00+00:00",
+      "last_seen_at": "2026-03-22T00:00:00+00:00",
+      "posted_at": "2026-03-01T00:00:00+00:00",
+      "feedback_types": []
+    }
+  ],
+  "expected": {
+    "ordered_job_ids": ["job-a", "job-b"],
+    "scores": {
+      "job-a": 121.62,
+      "job-b": 46.45
+    },
+    "top_reasons": {
+      "job-a": ["must_have_skills", "title_alignment", "remote_fit"],
+      "job-b": ["title_alignment", "location_fit", "title_family"]
+    }
+  }
+}

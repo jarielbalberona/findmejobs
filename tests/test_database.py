@@ -25,6 +25,7 @@ def test_migrations_apply_cleanly_and_hot_indexes_exist(migrated_db_url: str) ->
     assert "job_feedback" in inspector.get_table_names()
     assert "digests" in inspector.get_table_names()
     assert "delivery_events" in inspector.get_table_names()
+    assert "application_submissions" in inspector.get_table_names()
     normalized_indexes = {index["name"] for index in inspector.get_indexes("normalized_jobs")}
     review_indexes = {index["name"] for index in inspector.get_indexes("review_packets")}
     feedback_indexes = {index["name"] for index in inspector.get_indexes("job_feedback")}

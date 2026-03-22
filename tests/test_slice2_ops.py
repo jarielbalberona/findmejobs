@@ -246,6 +246,9 @@ def test_report_command_surfaces_source_health(migrated_runtime_config_files: tu
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["sources"]
+    assert "quality_gates" in payload
+    assert "application_funnel" in payload
+    assert "max_parse_error_rate" in payload["quality_gates"]
     smart = next(item for item in payload["sources"] if item["name"] == "smart-source")
     assert smart["latest_status"] == "success"
     assert smart["family"] == "predictable_ats"
@@ -297,3 +300,4 @@ def test_build_report_function_counts_ranked_vs_filtered(migrated_runtime_config
         session.commit()
         report = build_report(session)
     assert report["ranking"]["ranked"] >= 1
+    assert report["application_funnel"]["ready_count"] >= 1

@@ -33,3 +33,9 @@ username = ""
 use_tls = true
 sender = "findmejobs@example.com"
 recipient = "operator@example.com"
+
+[quality]
+max_parse_error_rate = 0.25
+max_skip_ratio_tier_b = 0.35
+max_failed_sources_per_run = 3
+max_delivery_failures_24h = 3

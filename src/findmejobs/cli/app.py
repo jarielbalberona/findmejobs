@@ -29,11 +29,13 @@ from findmejobs.config.source_file import (
     set_source_fields,
     write_sources_file,
 )
-from findmejobs.db.models import Digest, JobCluster, JobScore, NormalizedJob, Source, SourceJob
+from findmejobs.db.models import ApplicationSubmission, Digest, JobCluster, JobClusterMember, JobScore, NormalizedJob, Source, SourceJob
 from findmejobs.db.repositories import (
+    create_application_submission,
     create_job_feedback,
     create_pipeline_run,
     finish_pipeline_run,
+    update_application_submission,
     upsert_job_score,
     upsert_profile,
     upsert_rank_model,
@@ -45,13 +47,19 @@ from findmejobs.domain.source import SourceJobRecord
 from findmejobs.feedback import ALLOWED_FEEDBACK_TYPES, feedback_types_for_job, record_feedback
 from findmejobs.ingestion.orchestrator import run_ingest
 from findmejobs.normalization.canonicalize import normalize_job
-from findmejobs.observability.doctor import check_profile_config_health, doctor_failure_hints, run_doctor
+from findmejobs.observability.doctor import (
+    check_profile_config_health,
+    doctor_failure_hints,
+    quality_gate_failures,
+    run_doctor,
+)
 from findmejobs.observability.job_listing import fetch_job_previews, format_job_previews_text
 from findmejobs.observability.logging import configure_logging
 from findmejobs.observability.reporting import build_report
 from findmejobs.profile_bootstrap.service import ProfileBootstrapService
 from findmejobs.profile_bootstrap.models import ProfileConfigDraft, RankingConfigDraft
 from findmejobs.ranking.engine import rank_job_with_feedback
+from findmejobs.ranking.audit import resolve_ranking_audit_fixture, run_ranking_audit
 from findmejobs.ranking.explain import build_ranking_explain_payload, format_ranking_explain_text
 from findmejobs.ranking.yaml_patch import patch_ranking_yaml
 from findmejobs.review.service import export_review_packets, import_review_packets
@@ -74,6 +82,7 @@ reprocess_app = typer.Typer(help="Re-run normalization or review packet rebuilds
 ranking_app = typer.Typer(help="Inspect or adjust deterministic ranking (config/ranking.yaml)")
 jobs_app = typer.Typer(help="Inspect stored jobs (ranked previews for the current profile)")
 sources_app = typer.Typer(help="Add/list/update validated source definitions in config/sources.yaml")
+submissions_app = typer.Typer(help="Track human-triggered application submissions and outcomes")
 app.add_typer(config_app, name="config")
 app.add_typer(review_app, name="review")
 app.add_typer(profile_app, name="profile")
@@ -83,6 +92,7 @@ app.add_typer(reprocess_app, name="reprocess")
 app.add_typer(ranking_app, name="ranking")
 app.add_typer(jobs_app, name="jobs")
 app.add_typer(sources_app, name="sources")
+app.add_typer(submissions_app, name="submissions")
 
 
 def _version_option(value: bool) -> None:
@@ -123,8 +133,17 @@ reprocess_app.callback(invoke_without_command=True)(_typer_group_show_help_callb
 ranking_app.callback(invoke_without_command=True)(_typer_group_show_help_callback)
 jobs_app.callback(invoke_without_command=True)(_typer_group_show_help_callback)
 sources_app.callback(invoke_without_command=True)(_typer_group_show_help_callback)
+submissions_app.callback(invoke_without_command=True)(_typer_group_show_help_callback)
 
 LOGGER = logging.getLogger(__name__)
+SUBMISSION_STATUSES = {"submitted", "interview", "rejected", "offer", "withdrawn"}
+SUBMISSION_FEEDBACK_MAP = {
+    "submitted": "applied",
+    "interview": "interview",
+    "rejected": "rejected",
+    "offer": "offer",
+    "withdrawn": "withdrawn",
+}
 
 
 def _load_runtime(app_config_path: Path, profile_path: Path, sources_path: Path):
@@ -446,6 +465,7 @@ def rank(
                 )
                 scored = 0
                 filtered = 0
+                below_minimum = 0
                 hard_filter_hits: Counter[str] = Counter()
                 for cluster, job_row, source in clusters:
                     feedback_types = feedback_types_for_job(
@@ -460,9 +480,15 @@ def rank(
                     if breakdown.hard_filter_reasons:
                         filtered += 1
                         hard_filter_hits.update(breakdown.hard_filter_reasons)
+                    elif breakdown.total < profile.ranking.minimum_score:
+                        below_minimum += 1
                 rank_stats = {
                     "scored": scored,
+                    "total_scored": scored,
                     "filtered": filtered,
+                    "passed_hard_filters": max(scored - filtered, 0),
+                    "below_minimum": below_minimum,
+                    "model_version": profile.rank_model_version,
                     "hard_filter_reason_counts": dict(sorted(hard_filter_hits.items())),
                 }
                 finish_pipeline_run(run, "success", rank_stats)
@@ -471,7 +497,11 @@ def rank(
                     "command": "rank",
                     "status": "ok",
                     "scored": scored,
+                    "total_scored": scored,
                     "filtered": filtered,
+                    "passed_hard_filters": max(scored - filtered, 0),
+                    "below_minimum": below_minimum,
+                    "model_version": profile.rank_model_version,
                     "hard_filter_reason_counts": dict(sorted(hard_filter_hits.items())),
                 }
                 if export_ui_data:
@@ -736,6 +766,150 @@ def feedback_record(
             typer.echo(f"feedback recorded: id={record.id} type={record.feedback_type}")
 
 
+@submissions_app.command("list")
+def submissions_list(
+    app_config_path: Path = typer.Option(Path("config/app.toml"), exists=True),
+    profile_path: Path = typer.Option(Path("config/profile.yaml")),
+    sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
+    status: list[str] = typer.Option([], "--status"),
+    limit: int = typer.Option(50, "--limit", min=1, max=500),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    app_config, _profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_path)
+    with session_factory() as session:
+        stmt = select(ApplicationSubmission).order_by(ApplicationSubmission.created_at.desc()).limit(limit)
+        if status:
+            stmt = stmt.where(ApplicationSubmission.status.in_(status))
+        rows = session.scalars(stmt).all()
+    payload = {
+        "command": "submissions_list",
+        "status": "ok",
+        "count": len(rows),
+        "items": [
+            {
+                "id": row.id,
+                "job_id": row.job_id,
+                "cluster_id": row.cluster_id,
+                "status": row.status,
+                "channel": row.channel,
+                "submitted_at": row.submitted_at.isoformat() if row.submitted_at else None,
+                "external_ref": row.external_ref,
+                "notes": row.notes,
+                "created_at": row.created_at.isoformat(),
+                "updated_at": row.updated_at.isoformat(),
+            }
+            for row in rows
+        ],
+    }
+    if json_out:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    if not rows:
+        typer.echo("submissions list: no records")
+        return
+    for row in payload["items"]:
+        typer.echo(
+            f"{row['id']} status={row['status']} channel={row['channel']} "
+            f"job_id={row['job_id']} submitted_at={row['submitted_at'] or '-'}"
+        )
+
+
+@submissions_app.command("record")
+def submissions_record(
+    job_id: str = typer.Option(..., "--job-id"),
+    status: str = typer.Option(..., "--status"),
+    channel: str = typer.Option(..., "--channel"),
+    external_ref: str | None = typer.Option(None, "--external-ref"),
+    notes: str | None = typer.Option(None, "--notes"),
+    app_config_path: Path = typer.Option(Path("config/app.toml"), exists=True),
+    profile_path: Path = typer.Option(Path("config/profile.yaml")),
+    sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
+) -> None:
+    if status not in SUBMISSION_STATUSES:
+        typer.echo(f"submissions record failed: invalid_status:{status}")
+        raise typer.Exit(code=1)
+    app_config, _profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_path)
+    with FileLock(_pipeline_lock_path(app_config)):
+        with session_factory() as session:
+            try:
+                cluster_id = _cluster_id_for_job(session, job_id)
+            except ValueError as exc:
+                typer.echo(f"submissions record failed: {exc}")
+                raise typer.Exit(code=1)
+            submitted_at = utcnow() if status in {"submitted", "interview", "rejected", "offer", "withdrawn"} else None
+            record = create_application_submission(
+                session,
+                id_factory=new_id,
+                job_id=job_id,
+                cluster_id=cluster_id,
+                status=status,
+                channel=channel,
+                submitted_at=submitted_at,
+                external_ref=external_ref,
+                notes=notes,
+            )
+            _record_submission_feedback(session, cluster_id=cluster_id, status=status, notes=notes)
+            session.commit()
+            typer.echo(f"submissions record: id={record.id} status={record.status} job_id={record.job_id}")
+
+
+@submissions_app.command("update")
+def submissions_update(
+    id: str = typer.Option(..., "--id"),
+    status: str = typer.Option(..., "--status"),
+    external_ref: str | None = typer.Option(None, "--external-ref"),
+    notes: str | None = typer.Option(None, "--notes"),
+    app_config_path: Path = typer.Option(Path("config/app.toml"), exists=True),
+    profile_path: Path = typer.Option(Path("config/profile.yaml")),
+    sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
+) -> None:
+    if status not in SUBMISSION_STATUSES:
+        typer.echo(f"submissions update failed: invalid_status:{status}")
+        raise typer.Exit(code=1)
+    app_config, _profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_path)
+    with FileLock(_pipeline_lock_path(app_config)):
+        with session_factory() as session:
+            record = session.get(ApplicationSubmission, id)
+            if record is None:
+                typer.echo(f"submissions update failed: submission_not_found:{id}")
+                raise typer.Exit(code=1)
+            submitted_at = record.submitted_at
+            if status in {"submitted", "interview", "rejected", "offer", "withdrawn"} and submitted_at is None:
+                submitted_at = utcnow()
+            update_application_submission(
+                record,
+                status=status,
+                submitted_at=submitted_at,
+                external_ref=external_ref,
+                notes=notes,
+            )
+            _record_submission_feedback(session, cluster_id=record.cluster_id, status=status, notes=notes)
+            session.commit()
+            typer.echo(f"submissions update: id={record.id} status={record.status}")
+
+
+def _cluster_id_for_job(session, job_id: str) -> str:
+    cluster_id = session.scalar(
+        select(JobClusterMember.cluster_id).where(JobClusterMember.normalized_job_id == job_id).limit(1)
+    )
+    if cluster_id is None:
+        raise ValueError(f"job_cluster_not_found:{job_id}")
+    return cluster_id
+
+
+def _record_submission_feedback(session, *, cluster_id: str, status: str, notes: str | None = None) -> None:
+    feedback_type = SUBMISSION_FEEDBACK_MAP.get(status)
+    if feedback_type is None:
+        return
+    create_job_feedback(
+        session,
+        id_factory=new_id,
+        feedback_type=feedback_type,
+        cluster_id=cluster_id,
+        notes=notes,
+    )
+
+
 @app.command()
 def rerank(
     app_config_path: Path = typer.Option(Path("config/app.toml"), exists=True),
@@ -801,7 +975,7 @@ def report(
 ) -> None:
     app_config, _profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_path)
     with session_factory() as session:
-        report_payload = build_report(session)
+        report_payload = build_report(session, quality=app_config.quality)
     typer.echo(json.dumps(report_payload, indent=2))
 
 
@@ -1014,11 +1188,40 @@ def ranking_set(
     typer.echo(f"ranking set: wrote {ranking_path} (run `findmejobs rank` to refresh scores)")
 
 
+@ranking_app.command("audit")
+def ranking_audit(
+    fixture: str = typer.Option(..., "--fixture", help="Fixture name (config/examples/ranking_audit/<name>.json) or explicit path."),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    try:
+        fixture_path = resolve_ranking_audit_fixture(fixture)
+        result = run_ranking_audit(fixture_path)
+    except Exception as exc:  # noqa: BLE001
+        payload = {"command": "ranking_audit", "status": "failed", "error": str(exc)}
+        _emit_json(json_out, payload, f"ranking audit failed: {exc}")
+        raise typer.Exit(code=1)
+    payload = {
+        "command": "ranking_audit",
+        "status": "ok" if result.passed else "failed",
+        "fixture_path": str(result.fixture_path),
+        "errors": result.errors,
+        "actual_ordered_job_ids": result.actual_ordered_job_ids,
+        "actual_scores": result.actual_scores,
+        "actual_top_reasons": result.actual_top_reasons,
+    }
+    if result.passed:
+        _emit_json(json_out, payload, f"ranking audit passed: fixture={result.fixture_path}")
+        return
+    _emit_json(json_out, payload, f"ranking audit failed: {result.errors}")
+    raise typer.Exit(code=1)
+
+
 @app.command()
 def doctor(
     app_config_path: Path = typer.Option(Path("config/app.toml"), exists=True),
     profile_path: Path = typer.Option(Path("config/profile.yaml")),
     sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
+    strict: bool = typer.Option(False, "--strict", help="Fail when quality gates exceed configured [quality] thresholds."),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
     try:
@@ -1039,6 +1242,8 @@ def doctor(
                 app_config.storage.lock_dir,
             ],
         )
+        if strict:
+            errors.extend(quality_gate_failures(session, app_config.quality))
     errors.extend(check_profile_config_health(profile_path.parent))
     if errors:
         hints = doctor_failure_hints(errors)
@@ -1087,10 +1292,14 @@ def prepare_application(
             except (FileNotFoundError, ValueError) as exc:
                 typer.echo(f"prepare-application failed: {exc}")
                 raise typer.Exit(code=1)
+    readiness_state, blockers, _categories = service.readiness_from_packet(packet=packet, missing_inputs=missing_inputs)
     typer.echo(
         f"prepare-application complete: job_id={packet.job_id} "
-        f"questions={len(packet.application_questions)} missing_inputs={len(missing_inputs)}"
+        f"questions={len(packet.application_questions)} missing_inputs={len(missing_inputs)} "
+        f"readiness={readiness_state}"
     )
+    if blockers:
+        typer.echo("readiness_blockers: " + ", ".join(blockers))
 
 
 @app.command("draft-cover-letter")

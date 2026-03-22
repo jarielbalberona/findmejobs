@@ -182,6 +182,21 @@ class JobFeedback(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
 
 
+class ApplicationSubmission(Base):
+    __tablename__ = "application_submissions"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey("normalized_jobs.id"), nullable=False, index=True)
+    cluster_id: Mapped[str] = mapped_column(ForeignKey("job_clusters.id"), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    channel: Mapped[str] = mapped_column(String(32), nullable=False)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    external_ref: Mapped[str | None] = mapped_column(String(255))
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+
+
 class ReviewPacket(Base):
     __tablename__ = "review_packets"
     __table_args__ = (

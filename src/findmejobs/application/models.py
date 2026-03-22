@@ -257,6 +257,9 @@ class ApplicationPacketModel(BaseModel):
 class ApplicationValidationReport(BaseModel):
     job_id: str
     eligible: bool
+    readiness_state: Literal["ready", "needs_input", "ineligible"] = "ineligible"
+    blockers: list[str] = Field(default_factory=list)
+    missing_input_categories: list[str] = Field(default_factory=list)
     complete: bool = False
     packet_prepared: bool = False
     packet_sha256: str | None = None

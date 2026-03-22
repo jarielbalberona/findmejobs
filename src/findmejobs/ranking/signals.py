@@ -90,10 +90,18 @@ def score_source_trust(job: CanonicalJob) -> float:
 
 def score_feedback_signal(feedback_types: list[str] | None) -> float:
     feedback_types = feedback_types or []
-    if "relevant" in feedback_types:
+    if "offer" in feedback_types:
         return 1.0
-    if "irrelevant" in feedback_types:
+    if "interview" in feedback_types:
+        return 0.8
+    if "applied" in feedback_types:
+        return 0.4
+    if "relevant" in feedback_types:
+        return 0.6
+    if "irrelevant" in feedback_types or "rejected" in feedback_types:
         return -1.0
+    if "withdrawn" in feedback_types:
+        return -0.2
     return 0.0
 
 

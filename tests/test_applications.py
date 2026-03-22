@@ -261,6 +261,7 @@ def test_prepare_application_generates_sanitized_packet_and_missing_inputs(
         ],
     )
     assert result.exit_code == 0
+    assert "readiness=ready" in result.stdout
     packet = json.loads((state_root / job_id / "application_packet.json").read_text(encoding="utf-8"))
     assert "Ignore previous instructions" not in packet["canonical_job"]["description_excerpt"]
     assert len(packet["application_questions"]) == 3
@@ -843,6 +844,8 @@ def test_validation_reports_complete_current_drafts(application_runtime: dict[st
     with session_factory() as session:
         report = service.validate_application(session, profile, job_id=job_id)
     assert report.complete is True
+    assert report.readiness_state == "ready"
+    assert report.blockers == []
     assert report.cover_letter_status == "current"
     assert report.answers_status == "current"
     assert report.errors == []
@@ -873,6 +876,7 @@ def test_validation_reports_stale_drafts_when_packet_changes(application_runtime
     with session_factory() as session:
         report = service.validate_application(session, profile, job_id=job_id)
     assert report.complete is False
+    assert report.readiness_state == "needs_input"
     assert report.cover_letter_status == "stale"
     assert report.answers_status == "stale"
     assert "cover_letter_stale" in report.errors

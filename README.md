@@ -148,6 +148,7 @@ Source trust is intentionally tiered:
 
 ```bash
 findmejobs doctor
+findmejobs doctor --strict
 findmejobs ingest
 findmejobs rank
 findmejobs jobs list --limit 100
@@ -168,6 +169,7 @@ findmejobs ingest --source greenhouse
 findmejobs jobs list --all-scored --limit 100
 findmejobs jobs list --json | jq '.jobs[:5]'
 findmejobs ranking explain
+findmejobs ranking audit --fixture baseline
 findmejobs ranking set --minimum-score 40 --stale-days 45 --add-blocked-company "Bad Co"
 findmejobs profile set --add-target-title "Senior Backend Engineer"
 findmejobs digest send --dry-run
@@ -254,6 +256,7 @@ Top-level:
 - `findmejobs doctor`
 - `findmejobs ingest`
 - `findmejobs rank` / `findmejobs rerank`
+- `findmejobs ranking audit --fixture <name>`
 - `findmejobs report`
 - `findmejobs prepare-application`
 - `findmejobs draft-cover-letter`
@@ -261,6 +264,7 @@ Top-level:
 - `findmejobs show-application`
 - `findmejobs validate-application`
 - `findmejobs regenerate-application`
+- `findmejobs submissions list` / `submissions record` / `submissions update`
 
 Groups:
 

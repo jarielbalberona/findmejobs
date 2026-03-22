@@ -3,11 +3,14 @@ from __future__ import annotations
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
-from findmejobs.db.models import DeliveryEvent, Digest, JobScore, PipelineRun, Source, SourceFetchRun
+from findmejobs.config.models import QualityConfig
+from findmejobs.db.models import ApplicationSubmission, DeliveryEvent, Digest, JobScore, PipelineRun, Source, SourceFetchRun
 from findmejobs.domain.source import source_family_for_kind
+from findmejobs.observability.doctor import evaluate_quality_gates
 
 
-def build_report(session: Session) -> dict:
+def build_report(session: Session, *, quality: QualityConfig | None = None) -> dict:
+    quality = quality or QualityConfig()
     sources = []
     for source in session.scalars(select(Source).order_by(Source.name.asc())).all():
         latest = session.scalar(
@@ -60,7 +63,41 @@ def build_report(session: Session) -> dict:
         "ranked": session.scalar(select(func.count()).select_from(JobScore).where(JobScore.passed_hard_filters.is_(True))) or 0,
         "filtered": session.scalar(select(func.count()).select_from(JobScore).where(JobScore.passed_hard_filters.is_(False))) or 0,
     }
-    return {"sources": sources, "pipeline_runs": latest_runs, "delivery": delivery_summary, "ranking": ranking_summary}
+    ready_count = ranking_summary["ranked"]
+    submitted_count = (
+        session.scalar(
+            select(func.count())
+            .select_from(ApplicationSubmission)
+            .where(ApplicationSubmission.status.in_(["submitted", "interview", "rejected", "offer", "withdrawn"]))
+        )
+        or 0
+    )
+    interview_count = session.scalar(
+        select(func.count()).select_from(ApplicationSubmission).where(ApplicationSubmission.status == "interview")
+    ) or 0
+    reject_count = session.scalar(
+        select(func.count()).select_from(ApplicationSubmission).where(ApplicationSubmission.status == "rejected")
+    ) or 0
+    offer_count = session.scalar(
+        select(func.count()).select_from(ApplicationSubmission).where(ApplicationSubmission.status == "offer")
+    ) or 0
+    application_funnel = {
+        "ready_count": ready_count,
+        "submitted_count": submitted_count,
+        "interview_count": interview_count,
+        "reject_count": reject_count,
+        "offer_count": offer_count,
+        "interview_conversion_ratio": round(interview_count / submitted_count, 4) if submitted_count else 0.0,
+        "offer_conversion_ratio": round(offer_count / submitted_count, 4) if submitted_count else 0.0,
+    }
+    return {
+        "sources": sources,
+        "pipeline_runs": latest_runs,
+        "delivery": delivery_summary,
+        "ranking": ranking_summary,
+        "quality_gates": evaluate_quality_gates(session, quality),
+        "application_funnel": application_funnel,
+    }
 
 
 def _skip_ratio(latest: SourceFetchRun | None) -> float:

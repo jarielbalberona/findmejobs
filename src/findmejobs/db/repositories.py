@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from findmejobs.config.models import ProfileConfig, SourceConfig
 from findmejobs.db.models import (
+    ApplicationSubmission,
     DeliveryEvent,
     Digest,
     DigestItem,
@@ -427,3 +428,53 @@ def create_delivery_event(
     session.add(event)
     session.flush()
     return event
+
+
+def create_application_submission(
+    session: Session,
+    *,
+    id_factory,
+    job_id: str,
+    cluster_id: str,
+    status: str,
+    channel: str,
+    submitted_at=None,
+    external_ref: str | None = None,
+    notes: str | None = None,
+) -> ApplicationSubmission:
+    now = utcnow()
+    record = ApplicationSubmission(
+        id=id_factory(),
+        job_id=job_id,
+        cluster_id=cluster_id,
+        status=status,
+        channel=channel,
+        submitted_at=submitted_at,
+        external_ref=external_ref,
+        notes=notes,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(record)
+    session.flush()
+    return record
+
+
+def update_application_submission(
+    submission: ApplicationSubmission,
+    *,
+    status: str | None = None,
+    submitted_at=None,
+    external_ref: str | None = None,
+    notes: str | None = None,
+) -> ApplicationSubmission:
+    if status is not None:
+        submission.status = status
+    if submitted_at is not None:
+        submission.submitted_at = submitted_at
+    if external_ref is not None:
+        submission.external_ref = external_ref
+    if notes is not None:
+        submission.notes = notes
+    submission.updated_at = utcnow()
+    return submission

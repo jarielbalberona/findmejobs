@@ -7,6 +7,7 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
+from findmejobs.config.models import QualityConfig
 from findmejobs.config.loader import load_profile_config
 from findmejobs.db.models import DeliveryEvent, Digest, OpenClawReview, PipelineRun, ReviewPacket, Source, SourceFetchRun
 from findmejobs.domain.source import PH_BOARD_KINDS
@@ -54,6 +55,64 @@ def run_doctor(session: Session, database_url: str, required_paths: list[Path]) 
     _check_review_backlog(session, errors)
     _check_delivery_health(session, errors)
     return errors
+
+
+def evaluate_quality_gates(session: Session, quality: QualityConfig) -> dict[str, dict[str, float | int | bool]]:
+    latest_runs = _latest_runs_per_enabled_source(session)
+    parse_numerator = sum(run.parse_error_count for run, _source in latest_runs)
+    parse_denominator = sum(run.raw_seen_count for run, _source in latest_runs if run.raw_seen_count > 0)
+    parse_error_rate = round((parse_numerator / parse_denominator), 4) if parse_denominator > 0 else 0.0
+
+    tier_b_runs = [run for run, source in latest_runs if source.kind in PH_BOARD_KINDS]
+    tier_b_seen = sum(run.raw_seen_count for run in tier_b_runs if run.raw_seen_count > 0)
+    tier_b_skipped = sum(run.skipped_count for run in tier_b_runs if run.raw_seen_count > 0)
+    skip_ratio_tier_b = round((tier_b_skipped / tier_b_seen), 4) if tier_b_seen > 0 else 0.0
+
+    failed_sources = sum(1 for run, _source in latest_runs if run.status == "failed")
+    delivery_failures_24h = (
+        session.scalar(
+            select(func.count())
+            .select_from(DeliveryEvent)
+            .where(DeliveryEvent.status == "failed")
+            .where(DeliveryEvent.created_at >= utcnow() - timedelta(days=1))
+        )
+        or 0
+    )
+
+    return {
+        "max_parse_error_rate": {
+            "value": parse_error_rate,
+            "threshold": quality.max_parse_error_rate,
+            "passed": parse_error_rate <= quality.max_parse_error_rate,
+        },
+        "max_skip_ratio_tier_b": {
+            "value": skip_ratio_tier_b,
+            "threshold": quality.max_skip_ratio_tier_b,
+            "passed": skip_ratio_tier_b <= quality.max_skip_ratio_tier_b,
+        },
+        "max_failed_sources_per_run": {
+            "value": failed_sources,
+            "threshold": quality.max_failed_sources_per_run,
+            "passed": failed_sources <= quality.max_failed_sources_per_run,
+        },
+        "max_delivery_failures_24h": {
+            "value": delivery_failures_24h,
+            "threshold": quality.max_delivery_failures_24h,
+            "passed": delivery_failures_24h <= quality.max_delivery_failures_24h,
+        },
+    }
+
+
+def quality_gate_failures(session: Session, quality: QualityConfig) -> list[str]:
+    results = evaluate_quality_gates(session, quality)
+    failures: list[str] = []
+    for gate, verdict in results.items():
+        if verdict["passed"]:
+            continue
+        failures.append(
+            f"quality_gate_failed:{gate}:value={verdict['value']}:threshold={verdict['threshold']}"
+        )
+    return failures
 
 
 def check_profile_config_health(config_root: Path) -> list[str]:
@@ -149,3 +208,19 @@ def _has_partial_degradation(runs: list[SourceFetchRun]) -> bool:
         if (run.skipped_count / run.raw_seen_count) >= 0.2:
             degraded_runs += 1
     return degraded_runs >= 2
+
+
+def _latest_runs_per_enabled_source(session: Session) -> list[tuple[SourceFetchRun, Source]]:
+    latest: list[tuple[SourceFetchRun, Source]] = []
+    enabled_sources = session.scalars(select(Source).where(Source.enabled.is_(True))).all()
+    for source in enabled_sources:
+        run = session.scalar(
+            select(SourceFetchRun)
+            .where(SourceFetchRun.source_id == source.id)
+            .order_by(SourceFetchRun.started_at.desc(), SourceFetchRun.id.desc())
+            .limit(1)
+        )
+        if run is None:
+            continue
+        latest.append((run, source))
+    return latest

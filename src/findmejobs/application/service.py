@@ -118,6 +118,19 @@ class ApplicationDraftService:
         self._write_report(paths, packet, missing_inputs, cover_letter=None, answers=None)
         return packet, missing_inputs
 
+    def readiness_from_packet(
+        self,
+        *,
+        packet: ApplicationPacketModel,
+        missing_inputs: list[ApplicationMissingInput],
+    ) -> tuple[str, list[str], list[str]]:
+        _ = packet
+        categories = sorted({item.key for item in missing_inputs})
+        if categories:
+            blockers = [f"missing_input:{item}" for item in categories]
+            return "needs_input", blockers, categories
+        return "ready", [], []
+
     def draft_cover_letter(
         self,
         session: Session,
@@ -281,18 +294,39 @@ class ApplicationDraftService:
         try:
             self._load_job_context(session, profile, job_id)
         except ValueError as exc:
-            return ApplicationValidationReport(job_id=job_id, eligible=False, errors=[str(exc)])
+            return ApplicationValidationReport(
+                job_id=job_id,
+                eligible=False,
+                readiness_state="ineligible",
+                blockers=[str(exc)],
+                errors=[str(exc)],
+            )
 
         paths = self._paths(job_id)
         if not paths.packet_path.exists():
             errors.append("application_packet_missing")
-            return ApplicationValidationReport(job_id=job_id, eligible=True, errors=errors, warnings=warnings)
+            return ApplicationValidationReport(
+                job_id=job_id,
+                eligible=True,
+                readiness_state="needs_input",
+                blockers=errors.copy(),
+                errors=errors,
+                warnings=warnings,
+            )
 
         try:
             packet = ApplicationPacketModel.model_validate(json.loads(paths.packet_path.read_text(encoding="utf-8")))
         except (ValidationError, json.JSONDecodeError) as exc:
             errors.append(f"application_packet_invalid:{exc}")
-            return ApplicationValidationReport(job_id=job_id, eligible=True, packet_prepared=True, errors=errors, warnings=warnings)
+            return ApplicationValidationReport(
+                job_id=job_id,
+                eligible=True,
+                readiness_state="needs_input",
+                blockers=errors.copy(),
+                packet_prepared=True,
+                errors=errors,
+                warnings=warnings,
+            )
 
         packet_sha = self._packet_sha(packet)
         if paths.missing_inputs_path.exists():
@@ -334,9 +368,25 @@ class ApplicationDraftService:
 
         cover_letter_status = self._validate_cover_letter_state(paths, packet, packet_sha, missing_inputs, errors)
         answers_status = self._validate_answers_state(paths, packet, packet_sha, missing_inputs, errors)
+        readiness_state, readiness_blockers, missing_categories = self.readiness_from_packet(
+            packet=packet,
+            missing_inputs=missing_inputs,
+        )
+        blockers = list(dict.fromkeys([*readiness_blockers, *errors]))
+        if cover_letter_status != "current":
+            blockers.append(f"cover_letter_status:{cover_letter_status}")
+        if answers_status != "current":
+            blockers.append(f"answers_status:{answers_status}")
+        if not blockers and readiness_state != "ready":
+            blockers = readiness_blockers
+        if blockers and readiness_state == "ready":
+            readiness_state = "needs_input"
         return ApplicationValidationReport(
             job_id=job_id,
             eligible=True,
+            readiness_state=readiness_state,
+            blockers=blockers,
+            missing_input_categories=missing_categories,
             complete=not errors and cover_letter_status == "current" and answers_status == "current",
             packet_prepared=True,
             packet_sha256=packet_sha,

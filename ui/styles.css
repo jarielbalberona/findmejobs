@@ -242,27 +242,12 @@ th {
   margin-bottom: 0.5rem;
 }
 
-.detail-text {
-  width: 100%;
-  min-height: 160px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0.6rem;
-  resize: vertical;
-  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, monospace;
-  font-size: 0.84rem;
-  background: #fff;
-  margin-bottom: 1rem;
-}
-
 .detail-rich {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #fff;
   padding: 0.75rem;
   margin-bottom: 1rem;
-  max-height: 540px;
-  overflow: auto;
   line-height: 1.45;
   font-size: 0.9rem;
 }
@@ -281,6 +266,12 @@ th {
 .detail-rich h3,
 .detail-rich h4 {
   margin: 0.75rem 0 0.5rem;
+}
+
+.detail-plain {
+  white-space: pre-wrap;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, monospace;
+  font-size: 0.84rem;
 }
 
 .cmd-list {

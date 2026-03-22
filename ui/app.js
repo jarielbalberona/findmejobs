@@ -126,6 +126,15 @@ function renderDescriptionHtml(raw) {
     .join("");
 }
 
+function renderPlainBlock(el, text, emptyMessage) {
+  const value = text || "";
+  if (!value.trim()) {
+    el.innerHTML = `<span class="muted">${escapeHtml(emptyMessage)}</span>`;
+    return;
+  }
+  el.textContent = value;
+}
+
 function formatValue(v) {
   if (v === null || v === undefined) return "-";
   if (Array.isArray(v)) return v.length ? v.join(", ") : "-";
@@ -402,9 +411,9 @@ function renderJobDetail(jobId) {
     els.jobDetailMeta.textContent = `No detail found for job_id=${jobId}`;
     els.jobDetailLinks.innerHTML = "";
     els.jobDetailGrid.innerHTML = "";
-    els.coverLetterText.value = "";
-    els.answersText.value = "";
-    els.draftReportText.value = "";
+    renderPlainBlock(els.coverLetterText, "", "No cover letter draft yet.");
+    renderPlainBlock(els.answersText, "", "No answers draft yet.");
+    renderPlainBlock(els.draftReportText, "", "No draft report yet.");
     els.jobDescriptionHtml.innerHTML = `<p class="muted">No job description available.</p>`;
     els.jobCommandsList.innerHTML = "";
     els.jobCommandsList.removeAttribute("data-commands");
@@ -460,9 +469,13 @@ function renderJobDetail(jobId) {
     renderKvCard("Application Helper", summaryRight, Object.keys(summaryRight)),
   ].join("");
 
-  els.coverLetterText.value = app?.cover_letter?.text || "";
-  els.answersText.value = app?.answers?.text || "";
-  els.draftReportText.value = app?.draft_report_text || app?.missing_inputs_text || "";
+  renderPlainBlock(els.coverLetterText, app?.cover_letter?.text || "", "No cover letter draft yet.");
+  renderPlainBlock(els.answersText, app?.answers?.text || "", "No answers draft yet.");
+  renderPlainBlock(
+    els.draftReportText,
+    app?.draft_report_text || app?.missing_inputs_text || "",
+    "No draft report yet.",
+  );
   const description = detail?.description_text || app?.packet_summary?.description_excerpt || job?.description_snippet || "";
   els.jobDescriptionHtml.innerHTML = renderDescriptionHtml(description);
   renderCommandList(jobId);
@@ -611,7 +624,7 @@ function bindFilters() {
   });
 
   els.copyCoverLetterBtn.addEventListener("click", async () => {
-    const text = els.coverLetterText.value || "";
+    const text = els.coverLetterText.textContent || "";
     if (!text.trim()) {
       els.copyCoverLetterStatus.textContent = "No cover letter to copy.";
       return;

@@ -64,6 +64,44 @@ QUESTION_KEYS = {
     "remote_preference": ("remote_preference", "Remote preference is not present in the canonical profile."),
     "cover_letter_signature": ("full_name", "Cover letter signature needs the operator's name."),
 }
+RESPONSIBILITY_MARKERS = (
+    "build",
+    "design",
+    "develop",
+    "maintain",
+    "own",
+    "lead",
+    "deliver",
+    "implement",
+    "optimize",
+    "operate",
+    "support",
+    "collaborate",
+)
+REQUIREMENT_MARKERS = (
+    "must",
+    "required",
+    "qualification",
+    "experience with",
+    "proficient",
+    "knowledge of",
+    "familiar with",
+    "nice to have",
+    "preferred",
+)
+DOMAIN_MARKERS = (
+    "platform",
+    "product",
+    "api",
+    "customer",
+    "data",
+    "cloud",
+    "fintech",
+    "healthcare",
+    "ecommerce",
+    "saas",
+    "payments",
+)
 
 
 @dataclass(slots=True)
@@ -560,7 +598,14 @@ class ApplicationDraftService:
             detected_gaps=detected_gaps,
             unknowns=unknowns,
             application_questions=questions,
-            safe_context=self._safe_context(job, context.source.name),
+            safe_context=self._safe_context(
+                job,
+                context.source.name,
+                sanitized_excerpt=sanitized_excerpt,
+                profile=profile,
+                matched_required=matched_required,
+                matched_preferred=matched_preferred,
+            ),
         )
         missing_inputs = self._detect_missing_inputs(packet, profile)
         return packet, missing_inputs
@@ -741,7 +786,16 @@ class ApplicationDraftService:
         positive.sort(key=lambda item: item[1], reverse=True)
         return [f"{key.replace('_', ' ')}: {value:.2f}" for key, value in positive[:4]]
 
-    def _safe_context(self, job: NormalizedJob, source_name: str) -> list[str]:
+    def _safe_context(
+        self,
+        job: NormalizedJob,
+        source_name: str,
+        *,
+        sanitized_excerpt: str,
+        profile: ProfileConfig,
+        matched_required: list[str],
+        matched_preferred: list[str],
+    ) -> list[str]:
         context = [
             f"Role: {job.title} at {job.company_name}",
             f"Source: {source_name}",
@@ -752,7 +806,110 @@ class ApplicationDraftService:
         ]
         if job.tags_json:
             context.append(f"Tags: {', '.join(job.tags_json[:6])}")
+        parsed_context = self._extract_job_description_context(
+            sanitized_excerpt,
+            profile=profile,
+            matched_required=matched_required,
+            matched_preferred=matched_preferred,
+            tags=job.tags_json or [],
+        )
+        if parsed_context["responsibilities"]:
+            context.append(f"Responsibilities cues: {' | '.join(parsed_context['responsibilities'])}")
+        if parsed_context["requirements"]:
+            context.append(f"Requirements cues: {' | '.join(parsed_context['requirements'])}")
+        if parsed_context["stack"]:
+            context.append(f"Stack and domain cues: {', '.join(parsed_context['stack'])}")
         return context
+
+    def _extract_job_description_context(
+        self,
+        sanitized_excerpt: str,
+        *,
+        profile: ProfileConfig,
+        matched_required: list[str],
+        matched_preferred: list[str],
+        tags: list[str],
+    ) -> dict[str, list[str]]:
+        sentences = self._split_context_sentences(sanitized_excerpt)
+        responsibilities = self._select_sentences_by_markers(sentences, RESPONSIBILITY_MARKERS, limit=2)
+        requirements = self._select_sentences_by_markers(sentences, REQUIREMENT_MARKERS, limit=2)
+        stack = self._stack_cues(
+            sanitized_excerpt,
+            profile=profile,
+            matched_required=matched_required,
+            matched_preferred=matched_preferred,
+            tags=tags,
+        )
+        return {
+            "responsibilities": responsibilities,
+            "requirements": requirements,
+            "stack": stack,
+        }
+
+    def _split_context_sentences(self, sanitized_excerpt: str) -> list[str]:
+        if not sanitized_excerpt:
+            return []
+        parts = re.split(r"(?<=[.!?])\s+", sanitized_excerpt)
+        out: list[str] = []
+        for part in parts:
+            cleaned = collapse_whitespace(part).strip(" -•\t")
+            if len(cleaned) < 24:
+                continue
+            out.append(cleaned)
+        return out[:24]
+
+    def _select_sentences_by_markers(
+        self,
+        sentences: list[str],
+        markers: tuple[str, ...],
+        *,
+        limit: int,
+    ) -> list[str]:
+        selected: list[str] = []
+        for sentence in sentences:
+            lowered = sentence.casefold()
+            if not any(marker in lowered for marker in markers):
+                continue
+            selected.append(truncate_text(sentence, 180))
+            if len(selected) >= limit:
+                break
+        return selected
+
+    def _stack_cues(
+        self,
+        sanitized_excerpt: str,
+        *,
+        profile: ProfileConfig,
+        matched_required: list[str],
+        matched_preferred: list[str],
+        tags: list[str],
+    ) -> list[str]:
+        lowered_text = sanitized_excerpt.casefold()
+        cues: list[str] = []
+        seen: set[str] = set()
+        for skill in matched_required + matched_preferred:
+            key = skill.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            cues.append(skill)
+        for tag in tags:
+            key = tag.casefold()
+            if key in seen or key not in lowered_text:
+                continue
+            seen.add(key)
+            cues.append(tag)
+        for skill in profile.required_skills + profile.preferred_skills:
+            key = skill.casefold()
+            if key in seen or key not in lowered_text:
+                continue
+            seen.add(key)
+            cues.append(skill)
+        for marker in DOMAIN_MARKERS:
+            if marker in lowered_text and marker not in seen:
+                seen.add(marker)
+                cues.append(marker)
+        return cues[:10]
 
     def _salary_summary(self, job: NormalizedJob) -> str | None:
         if job.salary_min is None and job.salary_max is None:

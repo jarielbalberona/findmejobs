@@ -1586,6 +1586,100 @@ def regenerate_application(
     _echo_ui_export_status(payload, enabled=export_ui_data)
 
 
+@app.command("draft-applications")
+def draft_applications(
+    app_config_path: Path = typer.Option(Path("config/app.toml"), exists=True),
+    profile_path: Path = typer.Option(Path("config/profile.yaml")),
+    sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
+    state_root: Path = typer.Option(Path("state/applications")),
+    questions_file: Path | None = typer.Option(None, exists=True, dir_okay=False),
+    limit: int = typer.Option(100, "--limit", min=1, max=1000, help="Maximum review-eligible ranked jobs to process."),
+    fail_fast: bool = typer.Option(False, "--fail-fast", help="Stop on first per-job failure."),
+    json_out: bool = typer.Option(False, "--json", help="Emit machine-readable batch output."),
+    export_ui_data: bool = typer.Option(
+        True,
+        "--export-ui-data/--no-export-ui-data",
+        help="Run scripts/export_ui_data.sh after successful draft-applications (default: on).",
+    ),
+) -> None:
+    app_config, profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_path)
+    service = _application_service(state_root)
+    results: list[dict[str, object]] = []
+    failures: list[dict[str, str]] = []
+    selected_jobs = 0
+    with FileLock(_pipeline_lock_path(app_config)):
+        with session_factory() as session:
+            previews = fetch_job_previews(
+                session,
+                profile,
+                all_scored=False,
+                limit=limit,
+                snippet_length=120,
+            )
+            selected_jobs = len(previews)
+            for preview in previews:
+                try:
+                    result = service.regenerate_application(
+                        session,
+                        profile,
+                        job_id=preview.job_id,
+                        questions_file=questions_file,
+                    )
+                    missing_inputs = result.get("missing_inputs", [])
+                    readiness = "needs_input" if missing_inputs else "ready"
+                    results.append(
+                        {
+                            "job_id": preview.job_id,
+                            "cover_letter_origin": result.get("cover_letter_origin"),
+                            "answers_origin": result.get("answers_origin"),
+                            "missing_inputs": len(missing_inputs) if isinstance(missing_inputs, list) else 0,
+                            "readiness": readiness,
+                        }
+                    )
+                except (FileNotFoundError, ValueError) as exc:
+                    failures.append({"job_id": preview.job_id, "error": str(exc)})
+                    if fail_fast:
+                        break
+    payload: dict[str, object] = {
+        "command": "draft_applications",
+        "selected_jobs": selected_jobs,
+        "processed": len(results),
+        "failed": len(failures),
+        "results": results,
+        "failures": failures,
+    }
+    payload = _attach_ui_export(
+        payload,
+        enabled=export_ui_data,
+        app_config_path=app_config_path,
+        profile_path=profile_path,
+        sources_path=sources_path,
+    )
+    if json_out:
+        _emit_json(True, payload)
+    else:
+        typer.echo(
+            f"draft-applications complete: selected={selected_jobs} processed={len(results)} failed={len(failures)}"
+        )
+        for item in results:
+            typer.echo(
+                "job_id={job_id} readiness={readiness} cover_letter_origin={cover} answers_origin={answers} missing_inputs={missing}".format(
+                    job_id=item["job_id"],
+                    readiness=item["readiness"],
+                    cover=item["cover_letter_origin"],
+                    answers=item["answers_origin"],
+                    missing=item["missing_inputs"],
+                )
+            )
+        if failures:
+            typer.echo("failed_jobs:")
+            for item in failures:
+                typer.echo(f"- {item['job_id']}: {item['error']}")
+    _echo_ui_export_status(payload, enabled=export_ui_data)
+    if failures:
+        raise typer.Exit(code=1)
+
+
 @profile_app.command("import")
 def profile_import(
     file: Path | None = typer.Option(None, exists=True, dir_okay=False),

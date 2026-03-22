@@ -261,6 +261,7 @@ Top-level:
 - `findmejobs prepare-application`
 - `findmejobs draft-cover-letter`
 - `findmejobs draft-answers`
+- `findmejobs draft-applications`
 - `findmejobs show-application`
 - `findmejobs validate-application`
 - `findmejobs regenerate-application`
@@ -311,6 +312,8 @@ findmejobs prepare-application --job-id <job_id>
 findmejobs draft-cover-letter --job-id <job_id>
 findmejobs draft-answers --job-id <job_id>
 findmejobs validate-application --job-id <job_id>
+# bulk for current review-eligible ranked jobs
+findmejobs draft-applications --limit 100
 ```
 
 Artifacts are stored in `state/applications/<job_id>/`. This flow creates drafts only; it never submits applications.

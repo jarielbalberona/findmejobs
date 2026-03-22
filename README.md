@@ -206,6 +206,47 @@ Refresh behavior:
 - Re-run `./scripts/export_ui_data.sh` after pipeline changes.
 - `findmejobs rank` already triggers UI export by default.
 
+## OpenClaw Workflow
+
+If you run this as an OpenClaw skill from `~/.openclaw/skills/findmejobs`, use OpenClaw as the operator shell and this app as the system of record.
+
+Recommended chat-driven flow:
+
+1. `findmejobs doctor`
+2. `findmejobs sources list` (or `findmejobs sources add --json '...'` if needed)
+3. `findmejobs ingest`
+4. `findmejobs rank`
+5. `findmejobs review export`
+6. `findmejobs review import` (after review outputs exist)
+7. `findmejobs report`
+
+Profile bootstrap flow in OpenClaw:
+
+1. `findmejobs profile import --file /path/to/resume.pdf`
+2. `findmejobs profile show-draft`
+3. `findmejobs profile missing`
+4. `findmejobs profile validate-draft`
+5. `findmejobs profile diff`
+6. `findmejobs profile promote-draft`
+
+What OpenClaw is allowed to do:
+
+- Run CLI commands and summarize results back in chat
+- Read sanitized review packet outputs
+- Generate bounded drafting artifacts (`prepare-application`, `draft-cover-letter`, `draft-answers`)
+
+What OpenClaw must never do:
+
+- Act as the raw scraper/parser for job pages
+- Use raw HTML/raw payload dumps as review input
+- Change ranking to depend on LLM outputs
+
+Reference docs:
+
+- `SKILL.md` (OpenClaw skill behavior and command contract)
+- `skills/flows/` (onboarding, source setup, daily ops, troubleshooting)
+- `AGENTS.md` (trust boundary and architectural rules)
+
 ## Command surface
 
 Top-level:

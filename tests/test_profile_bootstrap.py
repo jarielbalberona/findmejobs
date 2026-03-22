@@ -439,14 +439,14 @@ def test_rich_resume_text_produces_substantial_baseline_draft(
     report = paths.import_report_path.read_text(encoding="utf-8")
 
     assert metadata.char_count > 2000
-    assert profile["full_name"] == "Jariel Balberona"
+    assert profile["full_name"] == "Alex Rivera"
     assert profile["headline"] == "Senior Fullstack Engineer"
     assert profile["years_experience"] == 10
     assert profile["location_text"] == "Philippines (Remote)"
-    assert profile["email"] == "jarielbalb@gmail.com"
-    assert profile["phone"] == "+63 917 657 0260"
-    assert profile["github_url"] == "https://github.com/jarielbalberona"
-    assert profile["linkedin_url"] == "https://linkedin.com/in/jarielbalberona"
+    assert profile["email"] == "alex.rivera@example.test"
+    assert profile["phone"] == "+63 917 111 2233"
+    assert profile["github_url"] == "https://github.com/alexrivera"
+    assert profile["linkedin_url"] == "https://linkedin.com/in/alexrivera"
     assert "TypeScript" in profile["required_skills"]
     assert "React" in profile["required_skills"]
     assert "Node.js" in profile["required_skills"]

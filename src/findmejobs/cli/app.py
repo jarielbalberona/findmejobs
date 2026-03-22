@@ -172,7 +172,12 @@ def _emit_json(json_out: bool, payload: dict, text: str | None = None) -> None:
         typer.echo(text)
 
 
-def _run_ui_data_export_script(app_config_path: Path) -> dict[str, object]:
+def _run_ui_data_export_script(
+    app_config_path: Path,
+    *,
+    profile_path: Path | None = None,
+    sources_path: Path | None = None,
+) -> dict[str, object]:
     env_script = os.getenv("FINDMEJOBS_UI_EXPORT_SCRIPT")
     script_candidates: list[Path] = []
     if env_script:
@@ -196,6 +201,12 @@ def _run_ui_data_export_script(app_config_path: Path) -> dict[str, object]:
         cwd=str(script_path.parent.parent),
         capture_output=True,
         text=True,
+        env={
+            **os.environ,
+            "FINDMEJOBS_APP_CONFIG_PATH": str(app_config_path),
+            **({"FINDMEJOBS_PROFILE_PATH": str(profile_path)} if profile_path is not None else {}),
+            **({"FINDMEJOBS_SOURCES_PATH": str(sources_path)} if sources_path is not None else {}),
+        },
     )
     if result.returncode != 0:
         stderr = result.stderr.strip()
@@ -213,6 +224,34 @@ def _run_ui_data_export_script(app_config_path: Path) -> dict[str, object]:
         "message": out or "ui data export complete",
         "script_path": str(script_path),
     }
+
+
+def _attach_ui_export(
+    payload: dict[str, object],
+    *,
+    enabled: bool,
+    app_config_path: Path,
+    profile_path: Path | None = None,
+    sources_path: Path | None = None,
+) -> dict[str, object]:
+    if enabled:
+        payload["ui_export"] = _run_ui_data_export_script(
+            app_config_path,
+            profile_path=profile_path,
+            sources_path=sources_path,
+        )
+    return payload
+
+
+def _echo_ui_export_status(payload: dict[str, object], *, enabled: bool) -> None:
+    if not enabled:
+        return
+    ui_export = payload.get("ui_export", {})
+    if isinstance(ui_export, dict) and ui_export.get("status") == "ok":
+        typer.echo(f"ui export: {ui_export.get('message')}")
+        return
+    if isinstance(ui_export, dict):
+        typer.echo(f"warning: {ui_export.get('message')}")
 
 
 def _pipeline_lock_path(app_config) -> Path:
@@ -504,8 +543,13 @@ def rank(
                     "model_version": profile.rank_model_version,
                     "hard_filter_reason_counts": dict(sorted(hard_filter_hits.items())),
                 }
-                if export_ui_data:
-                    payload["ui_export"] = _run_ui_data_export_script(app_config_path)
+                _attach_ui_export(
+                    payload,
+                    enabled=export_ui_data,
+                    app_config_path=app_config_path,
+                    profile_path=profile_path,
+                    sources_path=sources_path,
+                )
                 if json_out:
                     typer.echo(json.dumps(payload, indent=2))
                 else:
@@ -516,12 +560,7 @@ def rank(
                             "hard filter reasons (hits; a job with multiple reasons adds to each): "
                             + parts
                         )
-                    if export_ui_data:
-                        ui_export = payload.get("ui_export", {})
-                        if ui_export.get("status") == "ok":
-                            typer.echo(f"ui export: {ui_export.get('message')}")
-                        else:
-                            typer.echo(f"warning: {ui_export.get('message')}")
+                    _echo_ui_export_status(payload, enabled=export_ui_data)
             except typer.Exit:
                 raise
             except Exception as exc:
@@ -535,7 +574,14 @@ def rank(
                 raise
 
 
-def _run_review_import_results(app_config_path: Path, profile_path: Path, sources_path: Path, *, json_out: bool) -> None:
+def _run_review_import_results(
+    app_config_path: Path,
+    profile_path: Path,
+    sources_path: Path,
+    *,
+    json_out: bool,
+    export_ui_data: bool,
+) -> None:
     app_config, _profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_path)
     with FileLock(_pipeline_lock_path(app_config)):
         with session_factory() as session:
@@ -545,11 +591,17 @@ def _run_review_import_results(app_config_path: Path, profile_path: Path, source
                 imported = import_review_packets(session, app_config, new_id)
                 finish_pipeline_run(run, "success", {"imported": imported})
                 session.commit()
-                _emit_json(
-                    json_out,
-                    {"command": "review_import", "status": "ok", "imported": imported},
-                    f"review import complete: imported={imported}",
+                payload: dict[str, object] = {"command": "review_import", "status": "ok", "imported": imported}
+                _attach_ui_export(
+                    payload,
+                    enabled=export_ui_data,
+                    app_config_path=app_config_path,
+                    profile_path=profile_path,
+                    sources_path=sources_path,
                 )
+                _emit_json(json_out, payload, f"review import complete: imported={imported}")
+                if not json_out:
+                    _echo_ui_export_status(payload, enabled=export_ui_data)
             except typer.Exit:
                 raise
             except Exception as exc:
@@ -568,6 +620,11 @@ def review_export(
     app_config_path: Path = typer.Option(Path("config/app.toml"), exists=True),
     profile_path: Path = typer.Option(Path("config/profile.yaml")),
     sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
+    export_ui_data: bool = typer.Option(
+        True,
+        "--export-ui-data/--no-export-ui-data",
+        help="Run scripts/export_ui_data.sh after successful export (default: on).",
+    ),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
     app_config, profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_path)
@@ -579,11 +636,17 @@ def review_export(
                 exported = export_review_packets(session, app_config, profile, new_id)
                 finish_pipeline_run(run, "success", {"exported": exported})
                 session.commit()
-                _emit_json(
-                    json_out,
-                    {"command": "review_export", "status": "ok", "exported": exported},
-                    f"review export complete: exported={exported}",
+                payload: dict[str, object] = {"command": "review_export", "status": "ok", "exported": exported}
+                _attach_ui_export(
+                    payload,
+                    enabled=export_ui_data,
+                    app_config_path=app_config_path,
+                    profile_path=profile_path,
+                    sources_path=sources_path,
                 )
+                _emit_json(json_out, payload, f"review export complete: exported={exported}")
+                if not json_out:
+                    _echo_ui_export_status(payload, enabled=export_ui_data)
             except typer.Exit:
                 raise
             except Exception as exc:
@@ -602,9 +665,20 @@ def review_import_results(
     app_config_path: Path = typer.Option(Path("config/app.toml"), exists=True),
     profile_path: Path = typer.Option(Path("config/profile.yaml")),
     sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
+    export_ui_data: bool = typer.Option(
+        True,
+        "--export-ui-data/--no-export-ui-data",
+        help="Run scripts/export_ui_data.sh after successful import (default: on).",
+    ),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
-    _run_review_import_results(app_config_path, profile_path, sources_path, json_out=json_out)
+    _run_review_import_results(
+        app_config_path,
+        profile_path,
+        sources_path,
+        json_out=json_out,
+        export_ui_data=export_ui_data,
+    )
 
 
 @review_app.command("import")
@@ -612,10 +686,21 @@ def review_import_openclaw_results(
     app_config_path: Path = typer.Option(Path("config/app.toml"), exists=True),
     profile_path: Path = typer.Option(Path("config/profile.yaml")),
     sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
+    export_ui_data: bool = typer.Option(
+        True,
+        "--export-ui-data/--no-export-ui-data",
+        help="Run scripts/export_ui_data.sh after successful import (default: on).",
+    ),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
     """Same as import-results (reads review inbox → SQLite)."""
-    _run_review_import_results(app_config_path, profile_path, sources_path, json_out=json_out)
+    _run_review_import_results(
+        app_config_path,
+        profile_path,
+        sources_path,
+        json_out=json_out,
+        export_ui_data=export_ui_data,
+    )
 
 
 @digest_app.command("send")
@@ -625,6 +710,11 @@ def digest_send(
     sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
     digest_date: str | None = typer.Option(None),
     dry_run: bool = typer.Option(False, help="Build digest without sending email"),
+    export_ui_data: bool = typer.Option(
+        True,
+        "--export-ui-data/--no-export-ui-data",
+        help="Run scripts/export_ui_data.sh after successful digest send (default: on).",
+    ),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
     app_config, profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_path)
@@ -637,7 +727,7 @@ def digest_send(
                 finish_pipeline_run(run, "success", {"digest_id": digest.id, "status": digest.status, "dry_run": dry_run})
                 session.commit()
                 if dry_run:
-                    payload = {
+                    payload: dict[str, object] = {
                         "command": "digest_send",
                         "status": "ok",
                         "dry_run": True,
@@ -645,15 +735,29 @@ def digest_send(
                         "digest_status": digest.status,
                         "body_text": digest.body_text,
                     }
+                    _attach_ui_export(
+                        payload,
+                        enabled=export_ui_data,
+                        app_config_path=app_config_path,
+                        profile_path=profile_path,
+                        sources_path=sources_path,
+                    )
                     _emit_json(json_out, payload, f"digest dry-run complete: digest_id={digest.id} items={len(digest.body_text.splitlines())}")
                     if not json_out:
                         typer.echo(digest.body_text)
+                        _echo_ui_export_status(payload, enabled=export_ui_data)
                 else:
-                    _emit_json(
-                        json_out,
-                        {"command": "digest_send", "status": "ok", "dry_run": False, "digest_id": digest.id, "digest_status": digest.status},
-                        f"digest send complete: digest_id={digest.id} status={digest.status}",
+                    payload = {"command": "digest_send", "status": "ok", "dry_run": False, "digest_id": digest.id, "digest_status": digest.status}
+                    _attach_ui_export(
+                        payload,
+                        enabled=export_ui_data,
+                        app_config_path=app_config_path,
+                        profile_path=profile_path,
+                        sources_path=sources_path,
                     )
+                    _emit_json(json_out, payload, f"digest send complete: digest_id={digest.id} status={digest.status}")
+                    if not json_out:
+                        _echo_ui_export_status(payload, enabled=export_ui_data)
             except Exception as exc:
                 finish_pipeline_run(run, "failed", error_message=str(exc))
                 session.commit()
@@ -672,6 +776,11 @@ def digest_resend(
     sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
     digest_date: str = typer.Option(...),
     dry_run: bool = typer.Option(False, help="Build digest without sending email"),
+    export_ui_data: bool = typer.Option(
+        True,
+        "--export-ui-data/--no-export-ui-data",
+        help="Run scripts/export_ui_data.sh after successful digest resend (default: on).",
+    ),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
     app_config, profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_path)
@@ -700,7 +809,7 @@ def digest_resend(
                 finish_pipeline_run(run, "success", {"digest_id": digest.id, "status": digest.status, "resend_of": original.id, "dry_run": dry_run})
                 session.commit()
                 if dry_run:
-                    payload = {
+                    payload: dict[str, object] = {
                         "command": "digest_resend",
                         "status": "ok",
                         "dry_run": True,
@@ -709,22 +818,36 @@ def digest_resend(
                         "resend_of": original.id,
                         "body_text": digest.body_text,
                     }
+                    _attach_ui_export(
+                        payload,
+                        enabled=export_ui_data,
+                        app_config_path=app_config_path,
+                        profile_path=profile_path,
+                        sources_path=sources_path,
+                    )
                     _emit_json(json_out, payload, f"digest resend dry-run complete: digest_id={digest.id}")
                     if not json_out:
                         typer.echo(digest.body_text)
+                        _echo_ui_export_status(payload, enabled=export_ui_data)
                 else:
-                    _emit_json(
-                        json_out,
-                        {
-                            "command": "digest_resend",
-                            "status": "ok",
-                            "dry_run": False,
-                            "digest_id": digest.id,
-                            "digest_status": digest.status,
-                            "resend_of": original.id,
-                        },
-                        f"digest resend complete: digest_id={digest.id} status={digest.status}",
+                    payload = {
+                        "command": "digest_resend",
+                        "status": "ok",
+                        "dry_run": False,
+                        "digest_id": digest.id,
+                        "digest_status": digest.status,
+                        "resend_of": original.id,
+                    }
+                    _attach_ui_export(
+                        payload,
+                        enabled=export_ui_data,
+                        app_config_path=app_config_path,
+                        profile_path=profile_path,
+                        sources_path=sources_path,
                     )
+                    _emit_json(json_out, payload, f"digest resend complete: digest_id={digest.id} status={digest.status}")
+                    if not json_out:
+                        _echo_ui_export_status(payload, enabled=export_ui_data)
             except Exception as exc:
                 finish_pipeline_run(run, "failed", error_message=str(exc))
                 session.commit()
@@ -1277,6 +1400,11 @@ def prepare_application(
     profile_path: Path = typer.Option(Path("config/profile.yaml")),
     sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
     state_root: Path = typer.Option(Path("state/applications")),
+    export_ui_data: bool = typer.Option(
+        True,
+        "--export-ui-data/--no-export-ui-data",
+        help="Run scripts/export_ui_data.sh after successful prepare-application (default: on).",
+    ),
 ) -> None:
     app_config, profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_path)
     service = _application_service(state_root)
@@ -1300,6 +1428,14 @@ def prepare_application(
     )
     if blockers:
         typer.echo("readiness_blockers: " + ", ".join(blockers))
+    payload = _attach_ui_export(
+        {"command": "prepare_application"},
+        enabled=export_ui_data,
+        app_config_path=app_config_path,
+        profile_path=profile_path,
+        sources_path=sources_path,
+    )
+    _echo_ui_export_status(payload, enabled=export_ui_data)
 
 
 @app.command("draft-cover-letter")
@@ -1310,6 +1446,11 @@ def draft_cover_letter(
     profile_path: Path = typer.Option(Path("config/profile.yaml")),
     sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
     state_root: Path = typer.Option(Path("state/applications")),
+    export_ui_data: bool = typer.Option(
+        True,
+        "--export-ui-data/--no-export-ui-data",
+        help="Run scripts/export_ui_data.sh after successful draft-cover-letter (default: on).",
+    ),
 ) -> None:
     app_config, profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_path)
     service = _application_service(state_root)
@@ -1326,6 +1467,14 @@ def draft_cover_letter(
                 typer.echo(f"draft-cover-letter failed: {exc}")
                 raise typer.Exit(code=1)
     typer.echo(f"draft-cover-letter complete: job_id={draft.job_id} origin={draft.origin}")
+    payload = _attach_ui_export(
+        {"command": "draft_cover_letter"},
+        enabled=export_ui_data,
+        app_config_path=app_config_path,
+        profile_path=profile_path,
+        sources_path=sources_path,
+    )
+    _echo_ui_export_status(payload, enabled=export_ui_data)
 
 
 @app.command("draft-answers")
@@ -1336,6 +1485,11 @@ def draft_answers(
     profile_path: Path = typer.Option(Path("config/profile.yaml")),
     sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
     state_root: Path = typer.Option(Path("state/applications")),
+    export_ui_data: bool = typer.Option(
+        True,
+        "--export-ui-data/--no-export-ui-data",
+        help="Run scripts/export_ui_data.sh after successful draft-answers (default: on).",
+    ),
 ) -> None:
     app_config, profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_path)
     service = _application_service(state_root)
@@ -1352,6 +1506,14 @@ def draft_answers(
                 typer.echo(f"draft-answers failed: {exc}")
                 raise typer.Exit(code=1)
     typer.echo(f"draft-answers complete: job_id={draft.job_id} answers={len(draft.answers)} origin={draft.origin}")
+    payload = _attach_ui_export(
+        {"command": "draft_answers"},
+        enabled=export_ui_data,
+        app_config_path=app_config_path,
+        profile_path=profile_path,
+        sources_path=sources_path,
+    )
+    _echo_ui_export_status(payload, enabled=export_ui_data)
 
 
 @app.command("show-application")
@@ -1393,6 +1555,11 @@ def regenerate_application(
     profile_path: Path = typer.Option(Path("config/profile.yaml")),
     sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
     state_root: Path = typer.Option(Path("state/applications")),
+    export_ui_data: bool = typer.Option(
+        True,
+        "--export-ui-data/--no-export-ui-data",
+        help="Run scripts/export_ui_data.sh after successful regenerate-application (default: on).",
+    ),
 ) -> None:
     app_config, profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_path)
     service = _application_service(state_root)
@@ -1409,6 +1576,14 @@ def regenerate_application(
                 typer.echo(f"regenerate-application failed: {exc}")
                 raise typer.Exit(code=1)
     typer.echo(json.dumps(result, indent=2))
+    payload = _attach_ui_export(
+        {"command": "regenerate_application"},
+        enabled=export_ui_data,
+        app_config_path=app_config_path,
+        profile_path=profile_path,
+        sources_path=sources_path,
+    )
+    _echo_ui_export_status(payload, enabled=export_ui_data)
 
 
 @profile_app.command("import")

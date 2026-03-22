@@ -20,6 +20,8 @@ const els = {
   jobsTable: document.getElementById("jobsTable"),
   jobsMeta: document.getElementById("jobsMeta"),
   refreshBtn: document.getElementById("refreshBtn"),
+  applicationsCards: document.getElementById("applicationsCards"),
+  applicationsTable: document.getElementById("applicationsTable"),
   jobSearch: document.getElementById("jobSearch"),
   statusFilter: document.getElementById("statusFilter"),
   sourceFilter: document.getElementById("sourceFilter"),
@@ -85,6 +87,7 @@ function renderOverview(data) {
   const ranking = data.report?.ranking || {};
   const delivery = data.report?.delivery || {};
   const runs = data.report?.pipeline_runs || [];
+  const appTotals = data.application?.totals || {};
 
   const latestRun = runs[0];
   els.overviewCards.innerHTML = [
@@ -92,6 +95,7 @@ function renderOverview(data) {
     card("Jobs ranked", ranking.ranked ?? 0),
     card("Jobs filtered", ranking.filtered ?? 0),
     card("Latest digest", delivery.latest_digest_status || "none"),
+    card("Applications", appTotals.applications ?? 0),
     card("Latest run", latestRun ? `${latestRun.command}:${latestRun.status}` : "none"),
   ].join("");
 
@@ -237,6 +241,51 @@ function renderJobs(data) {
   applyJobFilters();
 }
 
+function renderApplications(data) {
+  const totals = data.application?.totals || {};
+  const rows = data.application?.applications || [];
+
+  els.applicationsCards.innerHTML = [
+    card("Tracked jobs", totals.applications ?? 0),
+    card("Prepared packets", totals.prepared ?? 0),
+    card("Cover letters ready", totals.cover_letters_ready ?? 0),
+    card("Answers ready", totals.answers_ready ?? 0),
+    card("Awaiting OpenClaw", totals.awaiting_openclaw_results ?? 0),
+  ].join("");
+
+  const body = rows
+    .map(
+      (app) => `
+      <tr>
+        <td>${escapeHtml(app.job_id || "-")}</td>
+        <td>${escapeHtml(app.company_name || "-")}</td>
+        <td>${escapeHtml(app.role_title || "-")}</td>
+        <td>${escapeHtml(app.source_name || "-")}</td>
+        <td>${escapeHtml(String(app.prepared))}</td>
+        <td>${escapeHtml(String(app.questions_count ?? 0))}</td>
+        <td>${escapeHtml(String(app.missing_inputs_count ?? 0))}</td>
+        <td>${escapeHtml(String(app.cover_letter?.ready ?? false))} (${escapeHtml(app.cover_letter?.origin || "-")})</td>
+        <td>${escapeHtml(String(app.answers?.ready ?? false))} (${escapeHtml(app.answers?.origin || "-")})</td>
+        <td>${escapeHtml(app.openclaw?.status || "-")}</td>
+        <td>${escapeHtml(app.updated_at || "-")}</td>
+      </tr>`,
+    )
+    .join("");
+
+  els.applicationsTable.innerHTML = `
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Job ID</th><th>Company</th><th>Role</th><th>Source</th><th>Prepared</th><th>Questions</th>
+            <th>Missing Inputs</th><th>Cover Letter</th><th>Answers</th><th>OpenClaw</th><th>Updated (UTC)</th>
+          </tr>
+        </thead>
+        <tbody>${body || '<tr><td colspan="11">No application state found under state/applications yet.</td></tr>'}</tbody>
+      </table>
+    </div>`;
+}
+
 function applyJobFilters() {
   const q = els.jobSearch.value.trim().toLowerCase();
   const status = els.statusFilter.value;
@@ -301,23 +350,28 @@ function applyJobFilters() {
 async function loadAll() {
   clearError();
   try {
-    const [config, ranking, sources, jobs, report, generatedAt] = await Promise.all([
+    const [config, ranking, sources, jobs, report, application, generatedAt] = await Promise.all([
       fetchJson(`${DATA_BASE}/config.json`),
       fetchJson(`${DATA_BASE}/ranking.json`),
       fetchJson(`${DATA_BASE}/sources.json`),
       fetchJson(`${DATA_BASE}/jobs.json`),
       fetchJson(`${DATA_BASE}/report.json`),
+      fetchJson(`${DATA_BASE}/application.json`),
       fetchText(`${DATA_BASE}/generated_at.txt`),
     ]);
 
-    state.data = { config, ranking, sources, jobs, report, generatedAt };
+    state.data = { config, ranking, sources, jobs, report, application, generatedAt };
     els.generatedAt.textContent = generatedAt ? `Snapshot: ${generatedAt}` : "Snapshot loaded";
+    if (report?.status === "error") {
+      showError(`report snapshot warning: ${report.message || "report command failed during export"}`);
+    }
 
     renderOverview(state.data);
     renderProfileAndSettings(state.data);
     renderRanking(state.data);
     renderSources(state.data);
     renderJobs(state.data);
+    renderApplications(state.data);
   } catch (err) {
     showError(
       `Failed to load snapshot data from ${DATA_BASE}. Run scripts/export_ui_data.sh and serve this repo root (not file://). Error: ${err.message}`,

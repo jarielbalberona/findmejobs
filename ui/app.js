@@ -24,6 +24,7 @@ const els = {
   applicationsCards: document.getElementById("applicationsCards"),
   applicationsTable: document.getElementById("applicationsTable"),
   jobDetailMeta: document.getElementById("jobDetailMeta"),
+  jobDetailLinks: document.getElementById("jobDetailLinks"),
   jobDetailGrid: document.getElementById("jobDetailGrid"),
   coverLetterText: document.getElementById("coverLetterText"),
   answersText: document.getElementById("answersText"),
@@ -354,6 +355,7 @@ function renderJobDetail(jobId) {
 
   if (!job && !app) {
     els.jobDetailMeta.textContent = `No detail found for job_id=${jobId}`;
+    els.jobDetailLinks.innerHTML = "";
     els.jobDetailGrid.innerHTML = "";
     els.coverLetterText.value = "";
     els.answersText.value = "";
@@ -378,7 +380,6 @@ function renderJobDetail(jobId) {
     seniority: detail?.seniority || "-",
     status: job?.status || "-",
     score: job?.score ?? app?.packet_summary?.score_total ?? detail?.score_total ?? "-",
-    canonical_url: detail?.canonical_url || job?.canonical_url || app?.packet_summary?.canonical_url || "-",
     posted_at: detail?.posted_at || "-",
     salary_min: detail?.salary_min ?? "-",
     salary_max: detail?.salary_max ?? "-",
@@ -395,6 +396,19 @@ function renderJobDetail(jobId) {
     cover_letter_ready: app?.cover_letter?.ready ?? false,
     answers_ready: app?.answers?.ready ?? false,
   };
+
+  const canonicalUrl = detail?.canonical_url || job?.canonical_url || app?.packet_summary?.canonical_url || "";
+  const sourceUrl = app?.paths?.packet_path || "";
+  const linkParts = [];
+  if (canonicalUrl) {
+    linkParts.push(
+      `<a href="${escapeHtml(canonicalUrl)}" target="_blank" rel="noreferrer">Open Canonical URL</a>`,
+    );
+  }
+  if (sourceUrl) {
+    linkParts.push(`<span class="muted">packet: ${escapeHtml(sourceUrl)}</span>`);
+  }
+  els.jobDetailLinks.innerHTML = linkParts.join(" | ");
 
   els.jobDetailGrid.innerHTML = [
     renderKvCard("Job", summaryLeft, Object.keys(summaryLeft)),

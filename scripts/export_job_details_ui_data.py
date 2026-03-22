@@ -28,7 +28,7 @@ def _sqlite_path_from_url(database_url: str, app_config_path: Path) -> Path:
     return (app_config_path.parent.parent / path).resolve()
 
 
-def _query_job_details(db_path: Path, *, description_max_chars: int) -> dict[str, dict]:
+def _query_job_details(db_path: Path, *, description_max_chars: int | None) -> dict[str, dict]:
     sql = """
     SELECT
       nj.id AS job_id,
@@ -63,7 +63,7 @@ def _query_job_details(db_path: Path, *, description_max_chars: int) -> dict[str
         conn.row_factory = sqlite3.Row
         for row in conn.execute(sql):
             description = row["description_text"] or ""
-            if len(description) > description_max_chars:
+            if description_max_chars is not None and description_max_chars > 0 and len(description) > description_max_chars:
                 description = description[:description_max_chars].rstrip() + "\n... [truncated]"
             try:
                 tags = json.loads(row["tags_json"] or "[]")
@@ -100,13 +100,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Export job detail JSON for UI.")
     parser.add_argument("--app-config-path", default="config/app.toml")
     parser.add_argument("--out", required=True)
-    parser.add_argument("--description-max-chars", type=int, default=12000)
+    parser.add_argument("--description-max-chars", type=int, default=0, help="0 means no truncation")
     args = parser.parse_args()
 
     app_config_path = Path(args.app_config_path)
     database_url = _load_database_url(app_config_path)
     db_path = _sqlite_path_from_url(database_url, app_config_path)
-    jobs = _query_job_details(db_path, description_max_chars=args.description_max_chars)
+    max_chars = None if args.description_max_chars <= 0 else args.description_max_chars
+    jobs = _query_job_details(db_path, description_max_chars=max_chars)
 
     payload = {"database_url": database_url, "db_path": str(db_path), "jobs": jobs}
     out_path = Path(args.out)

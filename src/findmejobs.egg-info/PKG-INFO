@@ -176,7 +176,7 @@ findmejobs config show-effective --json
 
 ## Core commands
 
-- `findmejobs doctor` — validate config, DB, and runtime paths
+- `findmejobs doctor` — validate config, DB, and runtime paths. On a fresh setup you may see `no_enabled_sources` (no enabled rows in the SQLite `sources` table yet) and/or `pipeline_never_succeeded` (no successful pipeline run recorded) until after at least one successful `ingest`; the command prints **Why / what to do** hints in plain text and a `hints` map with `--json`. That is normal during onboarding, not necessarily a misconfiguration.
 - `findmejobs config init` — create starter local config files
 - `findmejobs config validate` — validate local config files
 - `findmejobs config show-effective` — show resolved effective config (`--json` for machine output)

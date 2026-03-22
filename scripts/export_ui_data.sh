@@ -50,6 +50,9 @@ run_json_command "report" "$CLI_BIN" report --app-config-path "$APP_CONFIG_PATH"
 if ! python3 "$ROOT_DIR/scripts/export_application_ui_data.py" --state-root "$ROOT_DIR/state/applications" --out "$OUT_DIR/application.json"; then
   WARNINGS+=("application")
 fi
+if ! python3 "$ROOT_DIR/scripts/export_job_details_ui_data.py" --app-config-path "$APP_CONFIG_PATH" --out "$OUT_DIR/job_details.json"; then
+  WARNINGS+=("job_details")
+fi
 
 date -u +"%Y-%m-%dT%H:%M:%SZ" > "$OUT_DIR/generated_at.txt"
 

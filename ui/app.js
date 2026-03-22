@@ -28,6 +28,7 @@ const els = {
   coverLetterText: document.getElementById("coverLetterText"),
   answersText: document.getElementById("answersText"),
   draftReportText: document.getElementById("draftReportText"),
+  jobDescriptionText: document.getElementById("jobDescriptionText"),
   copyCoverLetterBtn: document.getElementById("copyCoverLetterBtn"),
   copyCoverLetterStatus: document.getElementById("copyCoverLetterStatus"),
   copyAllCommandsBtn: document.getElementById("copyAllCommandsBtn"),
@@ -110,6 +111,11 @@ function jobsById() {
 function applicationByJobId() {
   const apps = state.data?.application?.applications || [];
   return new Map(apps.map((app) => [app.job_id, app]));
+}
+
+function jobDetailsById() {
+  const jobs = state.data?.jobDetails?.jobs || {};
+  return new Map(Object.entries(jobs));
 }
 
 function renderOverview(data) {
@@ -316,21 +322,14 @@ function renderApplications(data) {
 }
 
 function buildApplicationCommands(jobId) {
-  const paths = state.data?.config?.paths || {};
-  const appConfigPath = paths.app_config_path || "config/app.toml";
-  const profilePath = paths.profile_path || "config/profile.yaml";
-  const sourcesPath = paths.sources_path || "config/sources.yaml";
   const quotedJob = JSON.stringify(jobId);
-  const base = `--app-config-path ${JSON.stringify(appConfigPath)} --profile-path ${JSON.stringify(profilePath)} --sources-path ${JSON.stringify(
-    sourcesPath,
-  )}`;
   return [
-    `./.venv/bin/findmejobs prepare-application --job-id ${quotedJob} ${base}`,
-    `./.venv/bin/findmejobs draft-cover-letter --job-id ${quotedJob} ${base}`,
-    `./.venv/bin/findmejobs draft-answers --job-id ${quotedJob} ${base}`,
-    `./.venv/bin/findmejobs show-application --job-id ${quotedJob}`,
-    `./.venv/bin/findmejobs validate-application --job-id ${quotedJob} ${base}`,
-    `./.venv/bin/findmejobs regenerate-application --job-id ${quotedJob} ${base}`,
+    `findmejobs prepare-application --job-id ${quotedJob}`,
+    `findmejobs draft-cover-letter --job-id ${quotedJob}`,
+    `findmejobs draft-answers --job-id ${quotedJob}`,
+    `findmejobs show-application --job-id ${quotedJob}`,
+    `findmejobs validate-application --job-id ${quotedJob}`,
+    `findmejobs regenerate-application --job-id ${quotedJob}`,
   ];
 }
 
@@ -351,6 +350,7 @@ function renderJobDetail(jobId) {
   state.selectedJobId = jobId;
   const job = jobsById().get(jobId);
   const app = applicationByJobId().get(jobId);
+  const detail = jobDetailsById().get(jobId);
 
   if (!job && !app) {
     els.jobDetailMeta.textContent = `No detail found for job_id=${jobId}`;
@@ -358,6 +358,7 @@ function renderJobDetail(jobId) {
     els.coverLetterText.value = "";
     els.answersText.value = "";
     els.draftReportText.value = "";
+    els.jobDescriptionText.value = "";
     els.jobCommandsList.innerHTML = "";
     els.jobCommandsList.removeAttribute("data-commands");
     return;
@@ -369,13 +370,20 @@ function renderJobDetail(jobId) {
   els.jobDetailMeta.textContent = bits.join(" | ");
 
   const summaryLeft = {
-    title: job?.title || app?.role_title || "-",
-    company: job?.company_name || app?.company_name || "-",
-    source: job?.source || app?.source_name || "-",
-    location: job?.location_text || app?.packet_summary?.location_text || "-",
+    title: detail?.title || job?.title || app?.role_title || "-",
+    company: detail?.company_name || job?.company_name || app?.company_name || "-",
+    source: detail?.source_name || job?.source || app?.source_name || "-",
+    location: detail?.location_text || job?.location_text || app?.packet_summary?.location_text || "-",
+    employment_type: detail?.employment_type || "-",
+    seniority: detail?.seniority || "-",
     status: job?.status || "-",
-    score: job?.score ?? app?.packet_summary?.score_total ?? "-",
-    canonical_url: job?.canonical_url || app?.packet_summary?.canonical_url || "-",
+    score: job?.score ?? app?.packet_summary?.score_total ?? detail?.score_total ?? "-",
+    canonical_url: detail?.canonical_url || job?.canonical_url || app?.packet_summary?.canonical_url || "-",
+    posted_at: detail?.posted_at || "-",
+    salary_min: detail?.salary_min ?? "-",
+    salary_max: detail?.salary_max ?? "-",
+    salary_currency: detail?.salary_currency || "-",
+    tags: detail?.tags || job?.tags || [],
     matched_signals: job?.matched_signals || app?.packet_summary?.matched_signals || [],
   };
 
@@ -396,6 +404,7 @@ function renderJobDetail(jobId) {
   els.coverLetterText.value = app?.cover_letter?.text || "";
   els.answersText.value = app?.answers?.text || "";
   els.draftReportText.value = app?.draft_report_text || app?.missing_inputs_text || "";
+  els.jobDescriptionText.value = detail?.description_text || app?.packet_summary?.description_excerpt || job?.description_snippet || "";
   renderCommandList(jobId);
 }
 
@@ -466,17 +475,18 @@ function applyJobFilters() {
 async function loadAll() {
   clearError();
   try {
-    const [config, ranking, sources, jobs, report, application, generatedAt] = await Promise.all([
+    const [config, ranking, sources, jobs, report, application, jobDetails, generatedAt] = await Promise.all([
       fetchJson(`${DATA_BASE}/config.json`),
       fetchJson(`${DATA_BASE}/ranking.json`),
       fetchJson(`${DATA_BASE}/sources.json`),
       fetchJson(`${DATA_BASE}/jobs.json`),
       fetchJson(`${DATA_BASE}/report.json`),
       fetchJson(`${DATA_BASE}/application.json`),
+      fetchJson(`${DATA_BASE}/job_details.json`),
       fetchText(`${DATA_BASE}/generated_at.txt`),
     ]);
 
-    state.data = { config, ranking, sources, jobs, report, application, generatedAt };
+    state.data = { config, ranking, sources, jobs, report, application, jobDetails, generatedAt };
     els.generatedAt.textContent = generatedAt ? `Snapshot: ${generatedAt}` : "Snapshot loaded";
     if (report?.status === "error") {
       showError(`report snapshot warning: ${report.message || "report command failed during export"}`);

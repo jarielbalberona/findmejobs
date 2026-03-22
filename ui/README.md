@@ -18,6 +18,7 @@ This writes:
 - `var/ui-data/jobs.json`
 - `var/ui-data/report.json`
 - `var/ui-data/application.json`
+- `var/ui-data/job_details.json`
 - `var/ui-data/generated_at.txt`
 
 ## 2) Serve repo root and open the UI

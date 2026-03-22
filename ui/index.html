@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>findmejobs Local Dashboard</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>findmejobs</h1>
+        <p class="subtitle">Local Read-Only Dashboard</p>
+      </div>
+      <div class="header-actions">
+        <button id="refreshBtn" type="button">Reload Data</button>
+        <span id="generatedAt" class="muted">No snapshot loaded</span>
+      </div>
+    </header>
+
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-tab="overview" type="button">Overview</button>
+      <button class="tab" data-tab="profile" type="button">Profile & Settings</button>
+      <button class="tab" data-tab="ranking" type="button">Ranking</button>
+      <button class="tab" data-tab="sources" type="button">Sources</button>
+      <button class="tab" data-tab="jobs" type="button">Jobs</button>
+    </nav>
+
+    <main class="layout">
+      <section id="errorBox" class="error hidden"></section>
+
+      <section class="panel active" data-panel="overview">
+        <div id="overviewCards" class="cards"></div>
+        <h2>Recent Pipeline Runs</h2>
+        <div id="pipelineRuns"></div>
+      </section>
+
+      <section class="panel" data-panel="profile">
+        <h2>Profile</h2>
+        <div id="profileGrid" class="grid-two"></div>
+        <h2>Runtime Settings</h2>
+        <div id="settingsGrid" class="grid-two"></div>
+      </section>
+
+      <section class="panel" data-panel="ranking">
+        <h2>Ranking Policy</h2>
+        <div id="rankingPolicy" class="grid-two"></div>
+        <h2>Weights</h2>
+        <div id="weightsTable"></div>
+        <h2>Title Families</h2>
+        <div id="titleFamilies"></div>
+      </section>
+
+      <section class="panel" data-panel="sources">
+        <h2>Source Health</h2>
+        <div id="sourcesTable"></div>
+      </section>
+
+      <section class="panel" data-panel="jobs">
+        <div class="jobs-toolbar">
+          <input id="jobSearch" type="search" placeholder="Search title/company/location" />
+          <select id="statusFilter">
+            <option value="all">All statuses</option>
+            <option value="eligible">Eligible</option>
+            <option value="below_threshold">Below threshold</option>
+            <option value="hard_filtered">Hard filtered</option>
+          </select>
+          <select id="sourceFilter">
+            <option value="all">All sources</option>
+          </select>
+          <input id="minScore" type="number" step="0.1" placeholder="Min score" />
+          <select id="sortBy">
+            <option value="score_desc">Score desc</option>
+            <option value="score_asc">Score asc</option>
+            <option value="title_asc">Title A-Z</option>
+            <option value="company_asc">Company A-Z</option>
+          </select>
+        </div>
+        <div id="jobsMeta" class="muted"></div>
+        <div id="jobsTable"></div>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

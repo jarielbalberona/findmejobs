@@ -1,0 +1,7 @@
+name = "example-jobvite"
+kind = "jobvite"
+enabled = false
+priority = 18
+trust_weight = 1.0
+company_code = "your-company-code"
+company_name = "Your Company"

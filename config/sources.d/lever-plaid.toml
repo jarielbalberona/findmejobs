@@ -1,0 +1,7 @@
+name = "plaid-lever"
+kind = "lever"
+enabled = true
+priority = 20
+trust_weight = 1.1
+company_name = "Plaid"
+site = "plaid"

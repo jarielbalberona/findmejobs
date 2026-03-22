@@ -1,10 +1,10 @@
 # Kalibrr:
-# Kalibrr documents employer-side career-site integration, not a stable public generic search API.
-# This points at a real public company jobs page instead of a fake API URL. Keep disabled until
-# the adapter is updated to the transport you actually observe and validate.
+# Public page is real, but the currently discoverable API transport responds with authorization
+# errors for anonymous access and does not match `KalibrrAdapter` expected payload (`jobs` list).
+# Keep disabled until parser+fetch strategy are updated and validated end-to-end.
 name = "zk-tech-kalibrr"
 kind = "kalibrr"
-enabled = true
+enabled = false
 priority = 6
 trust_weight = 0.75
 fetch_cap = 50

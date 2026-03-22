@@ -146,6 +146,40 @@ def test_workable_source_config_loads_with_expected_defaults(tmp_path: Path) -> 
     assert source.include_details is True
 
 
+def test_breezy_hr_and_jobvite_source_configs_load_with_expected_defaults(tmp_path: Path) -> None:
+    sources_dir = tmp_path / "sources.d"
+    sources_dir.mkdir(parents=True)
+    (sources_dir / "breezy.toml").write_text(
+        '\n'.join(
+            [
+                'name = "breezy-main"',
+                'kind = "breezy_hr"',
+                'enabled = true',
+                'company_subdomain = "example"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (sources_dir / "jobvite.toml").write_text(
+        '\n'.join(
+            [
+                'name = "jobvite-main"',
+                'kind = "jobvite"',
+                'enabled = true',
+                'company_code = "example"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    sources = {source.kind: source for source in load_source_configs(sources_dir)}
+
+    assert sources["breezy_hr"].trust_weight == 1.0
+    assert sources["breezy_hr"].priority == 0
+    assert sources["jobvite"].trust_weight == 1.0
+    assert sources["jobvite"].priority == 0
+
+
 def test_ph_board_source_configs_accept_explicit_priority_trust_and_fetch_cap(tmp_path: Path) -> None:
     sources_dir = tmp_path / "sources.d"
     sources_dir.mkdir(parents=True)

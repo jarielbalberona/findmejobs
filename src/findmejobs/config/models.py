@@ -105,6 +105,18 @@ class WorkableSourceConfig(SourceBaseConfig):
     company_name: str | None = None
 
 
+class BreezyHRSourceConfig(SourceBaseConfig):
+    kind: Literal["breezy_hr"]
+    company_subdomain: str
+    company_name: str | None = None
+
+
+class JobviteSourceConfig(SourceBaseConfig):
+    kind: Literal["jobvite"]
+    company_code: str
+    company_name: str | None = None
+
+
 class AshbySourceConfig(SourceBaseConfig):
     kind: Literal["ashby"]
     board_url: HttpUrl
@@ -151,6 +163,8 @@ SourceConfig = Annotated[
     | LeverSourceConfig
     | SmartRecruitersSourceConfig
     | WorkableSourceConfig
+    | BreezyHRSourceConfig
+    | JobviteSourceConfig
     | AshbySourceConfig
     | JobStreetPHSourceConfig
     | KalibrrSourceConfig

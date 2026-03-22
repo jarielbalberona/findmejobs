@@ -1,0 +1,9 @@
+# Seed source from operator request.
+# This is a listing/search page, not a stable single-job endpoint for direct extraction.
+name = "ziprecruiter-ie-search"
+kind = "direct_page"
+enabled = false
+priority = 3
+trust_weight = 0.6
+page_url = "https://www.ziprecruiter.ie/jobs/search?q=&l=&lat=&long=&d="
+company_name = "ZipRecruiter"

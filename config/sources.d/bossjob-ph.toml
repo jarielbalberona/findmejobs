@@ -1,10 +1,10 @@
 # Bossjob PH:
-# This file now points at the real public board host instead of a fake API hostname.
-# The current adapter still expects Bossjob's JSON transport shape, so keep this disabled
-# until the adapter is aligned with the live endpoint you validate in the browser.
+# Public board URL is correct, but accessible `/api/*` paths currently return HTML pages/404 in
+# this scraper context and not the adapter payload (`data.jobs`/`jobs`). Keep disabled until
+# the ingestion adapter is aligned with a stable, verifiable transport.
 name = "bossjob-ph"
 kind = "bossjob_ph"
-enabled = true
+enabled = false
 priority = 4
 trust_weight = 0.65
 fetch_cap = 50

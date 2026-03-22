@@ -1,0 +1,7 @@
+name = "openai-ashby"
+kind = "ashby"
+enabled = true
+priority = 20
+trust_weight = 1.1
+company_name = "OpenAI"
+board_url = "https://api.ashbyhq.com/posting-api/job-board/openai"

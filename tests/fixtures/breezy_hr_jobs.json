@@ -1,0 +1,14 @@
+[
+  {
+    "id": "brz-1001",
+    "name": "Senior Backend Engineer",
+    "url": "https://example.breezy.hr/p/abc123-senior-backend-engineer",
+    "location": {
+      "name": "Remote, Philippines"
+    },
+    "department": "Engineering",
+    "type": "Full-time",
+    "date": "2026-03-20T10:00:00Z",
+    "description": "<p>Build APIs with Python and PostgreSQL.</p>"
+  }
+]

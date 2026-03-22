@@ -10,10 +10,12 @@ from findmejobs.config.loader import load_app_config, load_source_configs
 from findmejobs.config.models import (
     AshbySourceConfig,
     BossjobPHSourceConfig,
+    BreezyHRSourceConfig,
     DirectPageSourceConfig,
     FounditPHSourceConfig,
     GreenhouseSourceConfig,
     JobStreetPHSourceConfig,
+    JobviteSourceConfig,
     KalibrrSourceConfig,
     LeverSourceConfig,
     RSSSourceConfig,
@@ -24,10 +26,12 @@ from findmejobs.db.models import NormalizedJob, RawDocument, SourceFetchRun, Sou
 from findmejobs.domain.source import FetchArtifact
 from findmejobs.ingestion.adapters.ashby import AshbyAdapter
 from findmejobs.ingestion.adapters.bossjob_ph import BossjobPHAdapter
+from findmejobs.ingestion.adapters.breezy_hr import BreezyHRAdapter
 from findmejobs.ingestion.adapters.direct_page import DirectPageAdapter
 from findmejobs.ingestion.adapters.foundit_ph import FounditPHAdapter
 from findmejobs.ingestion.adapters.greenhouse import GreenhouseAdapter
 from findmejobs.ingestion.adapters.jobstreet_ph import JobStreetPHAdapter
+from findmejobs.ingestion.adapters.jobvite import JobviteAdapter
 from findmejobs.ingestion.adapters.kalibrr import KalibrrAdapter
 from findmejobs.ingestion.adapters.lever import LeverAdapter
 from findmejobs.ingestion.adapters.rss import RSSAdapter, canonical_rss_key
@@ -159,6 +163,50 @@ def test_workable_adapter_parses_realistic_fixture(fixtures_dir: Path) -> None:
     assert records[0].location_text == "London, United Kingdom"
     assert records[0].salary_raw == "GBP 60000 - 80000"
     assert "on_site" in records[0].tags_raw
+
+
+def test_breezy_hr_adapter_parses_realistic_fixture(fixtures_dir: Path) -> None:
+    artifact = FetchArtifact(
+        fetched_url="https://example.breezy.hr/json",
+        final_url="https://example.breezy.hr/json",
+        status_code=200,
+        content_type="application/json",
+        headers={},
+        fetched_at=utcnow(),
+        body_bytes=(fixtures_dir / "breezy_hr_jobs.json").read_bytes(),
+        sha256="sha",
+        storage_path="/tmp/breezy.json",
+    )
+    config = BreezyHRSourceConfig(name="breezy-source", kind="breezy_hr", enabled=True, company_subdomain="example", company_name="Example Co")
+    records = BreezyHRAdapter().parse(artifact, config)
+
+    assert len(records) == 1
+    assert records[0].source_job_key == "brz-1001"
+    assert records[0].title == "Senior Backend Engineer"
+    assert records[0].company == "Example Co"
+    assert records[0].location_text == "Remote, Philippines"
+
+
+def test_jobvite_adapter_parses_realistic_fixture(fixtures_dir: Path) -> None:
+    artifact = FetchArtifact(
+        fetched_url="https://jobs.jobvite.com/api/jobs?c=example",
+        final_url="https://jobs.jobvite.com/api/jobs?c=example",
+        status_code=200,
+        content_type="application/json",
+        headers={},
+        fetched_at=utcnow(),
+        body_bytes=(fixtures_dir / "jobvite_jobs.json").read_bytes(),
+        sha256="sha",
+        storage_path="/tmp/jobvite.json",
+    )
+    config = JobviteSourceConfig(name="jobvite-source", kind="jobvite", enabled=True, company_code="example")
+    records = JobviteAdapter().parse(artifact, config)
+
+    assert len(records) == 1
+    assert records[0].source_job_key == "jv-2001"
+    assert records[0].apply_url == "https://jobs.jobvite.com/example/job/oQnWvfw1/apply"
+    assert records[0].company == "Example Jobvite Co"
+    assert records[0].location_text == "Remote, Philippines"
 
 
 def test_ashby_adapter_parses_realistic_fixture(fixtures_dir: Path) -> None:
@@ -314,6 +362,8 @@ def test_foundit_ph_adapter_parses_realistic_fixture(fixtures_dir: Path) -> None
     ("config", "body", "expected_error"),
     [
         (WorkableSourceConfig(name="workable", kind="workable", enabled=True, account_subdomain="example"), b"{}", "invalid_workable_payload"),
+        (BreezyHRSourceConfig(name="breezy", kind="breezy_hr", enabled=True, company_subdomain="example"), b"{}", "invalid_breezy_hr_payload"),
+        (JobviteSourceConfig(name="jobvite", kind="jobvite", enabled=True, company_code="example"), b"{}", "invalid_jobvite_payload"),
         (JobStreetPHSourceConfig(name="jobstreet", kind="jobstreet_ph", enabled=True, board_url="https://example.test/jobstreet"), b"{}", "invalid_jobstreet_ph_payload"),
         (KalibrrSourceConfig(name="kalibrr", kind="kalibrr", enabled=True, board_url="https://example.test/kalibrr"), b"{}", "invalid_kalibrr_payload"),
         (BossjobPHSourceConfig(name="bossjob", kind="bossjob_ph", enabled=True, board_url="https://example.test/bossjob"), b"{}", "invalid_bossjob_ph_payload"),
@@ -334,6 +384,8 @@ def test_ph_board_adapters_fail_visibly_on_malformed_payload(config, body: bytes
     )
     adapter = {
         "workable": WorkableAdapter(),
+        "breezy_hr": BreezyHRAdapter(),
+        "jobvite": JobviteAdapter(),
         "jobstreet_ph": JobStreetPHAdapter(),
         "kalibrr": KalibrrAdapter(),
         "bossjob_ph": BossjobPHAdapter(),

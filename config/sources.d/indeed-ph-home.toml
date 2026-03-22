@@ -1,0 +1,9 @@
+# Seed source from operator request.
+# Home/search surface only; keep disabled until Indeed-specific adapter is implemented.
+name = "indeed-ph-home"
+kind = "direct_page"
+enabled = false
+priority = 3
+trust_weight = 0.6
+page_url = "https://ph.indeed.com/"
+company_name = "Indeed Philippines"

@@ -1,0 +1,7 @@
+name = "example-breezy-hr"
+kind = "breezy_hr"
+enabled = false
+priority = 18
+trust_weight = 1.0
+company_subdomain = "your-company"
+company_name = "Your Company"

@@ -1,0 +1,8 @@
+name = "stripe-greenhouse"
+kind = "greenhouse"
+enabled = true
+priority = 20
+trust_weight = 1.1
+company_name = "Stripe"
+board_token = "stripe"
+include_content = true

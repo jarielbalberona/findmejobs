@@ -1,67 +1,38 @@
 # FindMeJobs
 
-`findmejobs` is a single-host Python job intelligence pipeline.
+`findmejobs` is a single-host Python job intelligence pipeline and system of record.
 
-It fetches jobs from predictable public sources, stores raw payloads, normalizes them into one canonical model, deduplicates, ranks them deterministically against your profile, and exports sanitized review packets for OpenClaw/UI consumption.
+It fetches jobs from public sources, stores raw payloads, normalizes to one canonical model, deduplicates, ranks deterministically, and exports sanitized review packets for OpenClaw-assisted review.
 
-This repo is the system of record. OpenClaw is an assistant around profile bootstrap, review, and bounded drafting. It is not the raw scraper.
+## Non-negotiables
 
-Built with Python 3.12, SQLite, SQLAlchemy, Pydantic, and Typer.
+- OpenClaw is **not** the raw scraper for this system.
+- Raw hostile content must never flow into OpenClaw prompts.
+- Ranking is deterministic and explainable; no LLM-scored ranking.
+- The pipeline is rerunnable and auditable (`ingest`, `rank`, `review`, `digest`, `rerank`, `reprocess`).
 
-Contributor rules and source-adapter guidance live in `AGENTS.md` and `CONTRIBUTING.md`.
+Detailed guardrails and adapter guidance live in `AGENTS.md` and `CONTRIBUTING.md`.
 
-OpenClaw/operator workflows are CLI-first in v1. Use `config init`, `config validate`, `config show-effective`, `profile set`, `ranking set`, and `sources` commands instead of manual editing.
+## What ships today
 
-## Start here
+- Profile bootstrap (resume import -> draft -> promote)
+- Source ingestion (RSS, ATS adapters, PH board adapters, conservative direct page parser)
+- Raw payload capture before normalization
+- Canonical normalization + layered dedupe
+- Deterministic ranking + explain tooling
+- Sanitized review packet export/import
+- Deterministic digest send/resend
+- Bounded application drafting (draft only, never submission)
 
-The easiest way to bootstrap a usable profile is to import a real resume file.
+## Explicitly out of scope
 
-```bash
-findmejobs profile import --file /path/to/resume.pdf
-findmejobs profile show-draft
-findmejobs profile missing
-findmejobs profile validate-draft
-findmejobs profile promote-draft
-```
-
-Supported inputs:
-- PDF
-- DOCX
-- TXT
-- Markdown
-- JSON Resume
-- pasted text via `findmejobs profile import --text "..."`
-
-What this does:
-- writes bootstrap artifacts under `state/profile_bootstrap/`
-- creates draft profile and ranking config
-- keeps missing preferences explicit instead of inventing them
-- promotes validated drafts into canonical `config/profile.yaml` and `config/ranking.yaml`
-
-If you skip this and start tuning ranking first, you are wasting time.
-
-## What it does
-
-- Imports a profile from resume/text into draft config
-- Ingests jobs from RSS, ATS adapters, PH job boards, and conservative direct pages
-- Stores raw payloads before normalization
-- Normalizes into one canonical job model
-- Deduplicates with layered exact matching
-- Ranks deterministically with explainable rules
-- Exports sanitized review packets to OpenClaw
-- Imports review results and optionally sends deterministic digests
-- Supports rerank and reprocess flows without unsafe hidden state
-
-## Out of scope
-
-Not implemented by default:
-- LinkedIn scraping or Easy Apply automation
-- Browser automation as a core fetch path
-- Auto-submitting applications
-- CAPTCHA solving or credential/session vaulting
-- Multi-agent workflows
-- Web dashboard
-- Postgres unless SQLite actually becomes insufficient
+- LinkedIn/Easy Apply automation
+- Browser automation as a default ingestion path
+- Auto-submit applications
+- CAPTCHA solving / credential vault workflows
+- Multi-agent application automation
+- Web dashboard as primary ops path
+- Postgres unless SQLite is proven insufficient
 
 ## Setup
 
@@ -74,29 +45,65 @@ pip install -e ".[dev]"
 alembic upgrade head
 ```
 
-The default DB URL is `sqlite:///./var/app.db`. If you see **OperationalError: unable to open database file**, you are almost never missing the `sqlite3` library (Python ships it). The usual cause is a missing **`var/`** directory on a fresh clone (it is gitignored). Current Alembic setup creates `var/` automatically before connecting; on older installs, run `mkdir -p var` from the repo root, then retry `alembic upgrade head`. Run Alembic from the **repository root** so the relative path resolves correctly.
+The default DB URL is `sqlite:///./var/app.db`. Run Alembic from the repo root.
 
-## Configure local runtime
+## Initialize local runtime config
 
-Runtime config is local and **gitignored** (see [.gitignore](.gitignore): `config/app.toml`, `config/profile.yaml`, `config/ranking.yaml`, `config/sources.yaml`).
+Runtime files are local and gitignored:
+
+- `config/app.toml`
+- `config/profile.yaml`
+- `config/ranking.yaml`
+- `config/sources.yaml`
+
+Initialize and validate:
 
 ```bash
 findmejobs config init
 findmejobs config validate
 ```
 
-Key files:
-- `config/app.toml` — runtime paths, database, HTTP, delivery
-- `config/profile.yaml` — canonical promoted profile
-- `config/ranking.yaml` — canonical promoted ranking config
-- `config/sources.yaml` — enabled sources
+Show resolved config:
 
-Delivery secret (only if you use email):
-- SMTP password is env-only: set `FINDMEJOBS_SMTP_PASSWORD` when email auth is needed.
+```bash
+findmejobs config show-effective --json
+```
 
-If you do not use email delivery, keep `delivery.email.enabled = false` in `config/app.toml` and skip all `digest` commands.
+SMTP password (if email delivery is enabled) is env-only:
 
-Minimal source example:
+```bash
+export FINDMEJOBS_SMTP_PASSWORD='...'
+```
+
+If email delivery is disabled, leave `delivery.email.enabled = false` and skip `digest` commands.
+
+## Bootstrap profile first
+
+Do this before ranking tweaks.
+
+```bash
+findmejobs profile import --file /path/to/resume.pdf
+findmejobs profile show-draft
+findmejobs profile missing
+findmejobs profile validate-draft
+findmejobs profile diff
+findmejobs profile promote-draft
+```
+
+Supported import inputs:
+
+- PDF
+- DOCX
+- TXT
+- Markdown
+- JSON Resume
+- pasted text via `findmejobs profile import --text "..."`
+
+Bootstrap artifacts live under `state/profile_bootstrap/`. Canonical files after promote are `config/profile.yaml` and `config/ranking.yaml`.
+
+## Configure sources
+
+Minimal `config/sources.yaml` example:
 
 ```yaml
 version: v1
@@ -108,6 +115,7 @@ sources:
 ```
 
 Supported source kinds:
+
 - `rss`
 - `greenhouse`
 - `lever`
@@ -120,10 +128,21 @@ Supported source kinds:
 - `foundit_ph`
 - `direct_page`
 
-Source trust is not equal:
-- Tier A ATS adapters are the cleanest sources
-- Tier B PH boards are more brittle and need closer scrutiny
-- Tier C direct-page parsing is fallback only
+Manage sources via CLI (not manual YAML surgery):
+
+```bash
+findmejobs sources list
+findmejobs sources add --json '{"name":"my-feed","kind":"rss","feed_url":"https://example.com/jobs.rss"}'
+findmejobs sources set my-feed --enabled --trust-weight 1.0
+findmejobs sources disable my-feed
+findmejobs sources remove my-feed --yes
+```
+
+Source trust is intentionally tiered:
+
+- Tier A ATS adapters: higher default trust
+- Tier B PH board adapters: more brittle, test harder
+- Tier C direct-page parser: fallback only
 
 ## Daily operator flow
 
@@ -131,135 +150,116 @@ Source trust is not equal:
 findmejobs doctor
 findmejobs ingest
 findmejobs rank
-./scripts/export_ui_data.sh
 findmejobs jobs list --limit 100
 findmejobs review export
 findmejobs review import
 findmejobs report
 ```
 
+Notes:
+
+- `findmejobs rank` runs `scripts/export_ui_data.sh` by default; disable with `--no-export-ui-data`.
+- `findmejobs doctor` may report onboarding-state warnings (for example no successful ingest yet) before first successful pipeline run.
+
 Useful variants:
 
 ```bash
 findmejobs ingest --source greenhouse
-findmejobs ranking explain
-findmejobs ranking set --minimum-score 40 --stale-days 45 --add-blocked-company "Bad Co"
-findmejobs jobs list
 findmejobs jobs list --all-scored --limit 100
 findmejobs jobs list --json | jq '.jobs[:5]'
-./scripts/export_ui_data.sh
-findmejobs sources list --json
-findmejobs sources add --json '{"name":"my-feed","kind":"rss","feed_url":"https://example.com/jobs.rss"}'
-findmejobs config show-effective --json
+findmejobs ranking explain
+findmejobs ranking set --minimum-score 40 --stale-days 45 --add-blocked-company "Bad Co"
+findmejobs profile set --add-target-title "Senior Backend Engineer"
+findmejobs digest send --dry-run
+findmejobs digest resend --digest-date 2026-03-19 --dry-run
 ```
 
-Optional email-only variants:
+## Local UI (read-only)
+
+The repo ships a static dashboard at `ui/` backed by snapshot files in `var/ui-data/`.
+
+What you can view:
+
+- Overview (pipeline summary and recent runs)
+- Profile & Settings
+- Ranking policy and weights
+- Sources and source health
+- Jobs (search, filters, score/status sorting)
+
+Generate snapshot data:
 
 ```bash
-findmejobs digest send --dry-run
-findmejobs digest resend --digest-date 2026-03-19
+./scripts/export_ui_data.sh
 ```
 
-## Core commands
+Serve the repo root and open the UI:
 
-- `findmejobs doctor` — validate config, DB, and runtime paths. On a fresh setup you may see `no_enabled_sources` (no enabled rows in the SQLite `sources` table yet) and/or `pipeline_never_succeeded` (no successful pipeline run recorded) until after at least one successful `ingest`; the command prints **Why / what to do** hints in plain text and a `hints` map with `--json`. That is normal during onboarding, not necessarily a misconfiguration.
-- `findmejobs config init` — create starter local config files
-- `findmejobs config validate` — validate local config files
-- `findmejobs config show-effective` — show resolved effective config (`--json` for machine output)
-- `findmejobs ingest [--source <name-or-kind>]` — fetch, store raw payloads, normalize, dedupe
-- `findmejobs sources list` — show validated sources from `config/sources.yaml` (`--json` for machine-readable)
-- `findmejobs sources add` — validate one JSON object and add/replace source config in `config/sources.yaml`
-- `findmejobs sources set|disable|remove` — mutate source config safely via CLI
-- `findmejobs rank` — apply deterministic ranking
-- `findmejobs rerank` — alias for `rank`
-- `findmejobs ranking explain` — show hard-filter reason codes → config keys, score components → weights, and the effective `ranking.yaml` policy (use `--json` for machine-readable)
-- `findmejobs ranking set` — patch scalar/list/weights/title-family fields in `config/ranking.yaml`
-- `findmejobs profile set` — patch canonical profile fields/lists in `config/profile.yaml`
-- `findmejobs jobs list` — print ranked job previews (title, score, tags, matched signals, description snippet); add `--all-scored` for hard-filtered / below-threshold rows, `--json` for machine-readable output (same filters as text—combine `--json` with `--all-scored` when you want every scored row)
-- `./scripts/export_ui_data.sh` — export UI files under `var/ui-data/` (including `jobs.json` used by the Jobs tab)
-- `findmejobs report` — print operational summary
-- `findmejobs review export` — write sanitized review packets to the configured review outbox (OpenClaw review flow, separate from UI Jobs tab data)
-- `findmejobs review import` — import review results
-- `findmejobs digest send [--dry-run]` — build or send daily digest
-- `findmejobs digest resend --digest-date YYYY-MM-DD [--dry-run]` — rebuild and resend a prior digest
-- `findmejobs profile import --file <path>` — bootstrap from a resume file
-- `findmejobs profile reimport --file <path>` — refresh draft while preserving explicit preferences where possible
-- `findmejobs profile show-draft` — inspect current draft
-- `findmejobs profile missing` — show unresolved fields
-- `findmejobs profile validate-draft` — fail on incomplete or weak drafts
-- `findmejobs profile diff` — compare draft vs canonical config
-- `findmejobs profile promote-draft` — write validated canonical config
+```bash
+python3 -m http.server 4173
+```
 
-For the rest:
+Open `http://127.0.0.1:4173/ui/`.
+
+Refresh behavior:
+
+- Click `Reload Data` in the UI to re-fetch current snapshot files.
+- Re-run `./scripts/export_ui_data.sh` after pipeline changes.
+- `findmejobs rank` already triggers UI export by default.
+
+## Command surface
+
+Top-level:
+
+- `findmejobs doctor`
+- `findmejobs ingest`
+- `findmejobs rank` / `findmejobs rerank`
+- `findmejobs report`
+- `findmejobs prepare-application`
+- `findmejobs draft-cover-letter`
+- `findmejobs draft-answers`
+- `findmejobs show-application`
+- `findmejobs validate-application`
+- `findmejobs regenerate-application`
+
+Groups:
+
+- `findmejobs config ...`
+- `findmejobs profile ...`
+- `findmejobs ranking ...`
+- `findmejobs jobs ...`
+- `findmejobs review ...`
+- `findmejobs digest ...`
+- `findmejobs feedback ...`
+- `findmejobs reprocess ...`
+- `findmejobs sources ...`
+
+Explore help:
 
 ```bash
 findmejobs --help
-findmejobs profile --help
-findmejobs ranking --help
-findmejobs jobs --help
-findmejobs review --help
-findmejobs digest --help
-findmejobs sources --help
+findmejobs <group> --help
+findmejobs <group> <command> --help
 ```
 
-## Ranking configuration
+## Ranking model behavior
 
-Hard filters (drop jobs before scoring) are implemented in `src/findmejobs/ranking/hard_filters.py` and driven mainly by **`config/ranking.yaml`** plus **`config/profile.yaml`** (e.g. `allowed_countries`, `target_titles`, skills). Reasons are stored on each run in `job_scores.hard_filter_reasons_json`.
-
-Soft scoring (the factors that become `matched_signals` when weighted points > 0) are assembled in `src/findmejobs/ranking/engine.py` from `src/findmejobs/ranking/signals.py`, with per-signal weights in `ranking.yaml` under `weights`.
-
-Individual rules are not toggled on/off in config today: each check is always evaluated, but you can **disable the effect** by clearing the underlying lists / thresholds (e.g. empty `blocked_companies`, `require_remote: false`, or a very large `stale_days`). Use `findmejobs ranking explain` to see the mapping from reason codes and component names to config.
+- Hard filters run before scoring and emit reason codes per job score row.
+- Soft scoring uses weighted signals from `config/ranking.yaml`.
+- Rules are always evaluated; you change behavior through config values/lists/weights, not by hidden toggles.
+- Use `findmejobs ranking explain` to inspect reason-code and signal-to-config mapping.
 
 ## Trust boundary
 
-Keep this straight:
-- raw payloads are stored before normalization
-- OpenClaw does not scrape raw job pages for this system
-- OpenClaw does not read raw hostile content or SQLite directly
-- OpenClaw only sees sanitized review packets and bounded application inputs
-- ranking stays deterministic and does not depend on LLM output
+Keep this boundary intact:
 
-If you blur this boundary, you are breaking the architecture.
+- Raw payloads are captured before normalization.
+- OpenClaw does not scrape job pages for this system.
+- OpenClaw only sees sanitized review/application inputs.
+- Review logic stays separate from ingestion/parsing logic.
 
-## Profile bootstrap
+## Application drafting (bounded)
 
-Profile bootstrap is draft-first by design.
-
-Typical flow:
-
-```bash
-findmejobs profile import --file /path/to/resume.pdf
-findmejobs profile show-draft
-findmejobs profile missing
-findmejobs profile validate-draft
-findmejobs profile diff
-findmejobs profile promote-draft
-```
-
-Artifacts:
-- `state/profile_bootstrap/input/`
-- `state/profile_bootstrap/extracted/`
-- `state/profile_bootstrap/drafts/`
-
-Canonical config after promotion:
-- `config/profile.yaml`
-- `config/ranking.yaml`
-
-Rules:
-- resume import is bootstrap input, not final truth
-- missing hard preferences stay missing unless explicitly stated
-- promotion fails if the draft is incomplete or inconsistent
-- reimport should not silently overwrite explicit user preferences
-
-Example draft templates:
-- `config/examples/profile.draft.yaml`
-- `config/examples/ranking.draft.yaml`
-
-## Application drafting
-
-Application drafting is bounded. It generates artifacts for review. It does not auto-apply.
-
-Typical flow:
+Draft flow:
 
 ```bash
 findmejobs prepare-application --job-id <job_id>
@@ -268,51 +268,18 @@ findmejobs draft-answers --job-id <job_id>
 findmejobs validate-application --job-id <job_id>
 ```
 
-Artifacts live under `state/applications/<job_id>/`.
+Artifacts are stored in `state/applications/<job_id>/`. This flow creates drafts only; it never submits applications.
 
-Rules:
-- drafts only, never submission
-- no raw HTML or raw page dumps in the drafting boundary
-- no invented claims or guessed personal preferences
+## Deployment model
 
-## Project structure
+Designed for one Linux host with systemd timers.
 
-```text
-src/findmejobs/
-  application/
-  cli/
-  config/
-  db/
-  dedupe/
-  delivery/
-  domain/
-  ingestion/
-  normalization/
-  observability/
-  ranking/
-  review/
+Typical prod layout:
 
-config/
-  examples/        committed templates (`app.toml`, `sources.yaml`, draft YAML examples)
-  app.toml         operator-local runtime config
-  profile.yaml     canonical operator profile
-  ranking.yaml     canonical ranking config
-  sources.yaml     canonical source config list
+- config: `/etc/findmejobs/`
+- state: `/var/lib/findmejobs/`
 
-state/
-  profile_bootstrap/
-  applications/
-
-systemd/
-```
-
-## Deployment
-
-This project is designed for one Linux host with systemd timers, not fake distributed infrastructure.
-
-Production config usually lives under `/etc/findmejobs/` and persistent state under `/var/lib/findmejobs/`.
-
-Enable the shipped timers after installing the app and copying local config:
+Enable timers after install/config:
 
 ```bash
 sudo systemctl daemon-reload
@@ -323,7 +290,7 @@ sudo systemctl enable --now findmejobs-review-import.timer
 sudo systemctl enable --now findmejobs-doctor.timer
 ```
 
-If email delivery is disabled, skip `findmejobs-digest.timer`.
+If email delivery is enabled, also enable `findmejobs-digest.timer`.
 
 ## Tests
 
@@ -333,6 +300,6 @@ pytest
 
 ## Known limitations
 
-- salary parsing is still minimal
-- direct-page parsing is intentionally conservative
-- PH board adapters are more fragile than predictable ATS adapters
+- Salary parsing is still minimal.
+- Direct-page parsing remains intentionally conservative.
+- PH board adapters are more fragile than predictable ATS adapters.

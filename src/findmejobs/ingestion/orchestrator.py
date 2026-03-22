@@ -9,10 +9,12 @@ from findmejobs.config.models import (
     AppConfig,
     AshbySourceConfig,
     BossjobPHSourceConfig,
+    BreezyHRSourceConfig,
     DirectPageSourceConfig,
     FounditPHSourceConfig,
     GreenhouseSourceConfig,
     JobStreetPHSourceConfig,
+    JobviteSourceConfig,
     KalibrrSourceConfig,
     LeverSourceConfig,
     RSSSourceConfig,
@@ -31,10 +33,12 @@ from findmejobs.db.repositories import (
 from findmejobs.dedupe.clustering import assign_job_cluster
 from findmejobs.ingestion.adapters.ashby import AshbyAdapter
 from findmejobs.ingestion.adapters.bossjob_ph import BossjobPHAdapter
+from findmejobs.ingestion.adapters.breezy_hr import BreezyHRAdapter
 from findmejobs.ingestion.adapters.direct_page import DirectPageAdapter
 from findmejobs.ingestion.adapters.foundit_ph import FounditPHAdapter
 from findmejobs.ingestion.adapters.greenhouse import GreenhouseAdapter
 from findmejobs.ingestion.adapters.jobstreet_ph import JobStreetPHAdapter
+from findmejobs.ingestion.adapters.jobvite import JobviteAdapter
 from findmejobs.ingestion.adapters.kalibrr import KalibrrAdapter
 from findmejobs.ingestion.adapters.lever import LeverAdapter
 from findmejobs.ingestion.adapters.rss import RSSAdapter
@@ -181,6 +185,10 @@ def build_adapter(config: SourceConfig):
         return SmartRecruitersAdapter()
     if isinstance(config, WorkableSourceConfig):
         return WorkableAdapter()
+    if isinstance(config, BreezyHRSourceConfig):
+        return BreezyHRAdapter()
+    if isinstance(config, JobviteSourceConfig):
+        return JobviteAdapter()
     if isinstance(config, AshbySourceConfig):
         return AshbyAdapter()
     if isinstance(config, JobStreetPHSourceConfig):

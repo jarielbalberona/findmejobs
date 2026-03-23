@@ -4,7 +4,7 @@
 # and headers/session strategy are updated against a verified live transport.
 name = "jobstreet-ph"
 kind = "jobstreet_ph"
-enabled = true
+enabled = false
 priority = 5
 trust_weight = 0.7
 fetch_cap = 50

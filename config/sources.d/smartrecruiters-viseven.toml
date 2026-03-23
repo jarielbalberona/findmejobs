@@ -1,6 +1,6 @@
 name = "viseven-smartrecruiters"
 kind = "smartrecruiters"
-enabled = true
+enabled = false
 priority = 18
 trust_weight = 1.0
 company_name = "Viseven"

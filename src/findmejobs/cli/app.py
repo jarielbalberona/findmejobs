@@ -7,7 +7,7 @@ import subprocess
 from collections import Counter
 import shutil
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 from typer import Context
@@ -56,6 +56,7 @@ from findmejobs.observability.doctor import (
 from findmejobs.observability.job_listing import fetch_job_previews, format_job_previews_text
 from findmejobs.observability.logging import configure_logging
 from findmejobs.observability.reporting import build_report
+from findmejobs.profile_bootstrap.promote import load_existing_ranking
 from findmejobs.profile_bootstrap.service import ProfileBootstrapService
 from findmejobs.profile_bootstrap.models import ProfileConfigDraft, RankingConfigDraft
 from findmejobs.ranking.engine import rank_job_with_feedback
@@ -68,10 +69,18 @@ from findmejobs.utils.locking import FileLock
 from findmejobs.utils.time import utcnow
 from findmejobs.utils.yamlio import dump_yaml, load_yaml
 
+from findmejobs.cli.json_envelope import cli_envelope, emit_envelope, meta_standard
+from findmejobs.cli.operator_queues import fetch_applications_queue_rows, fetch_review_queue_rows
+from findmejobs.cli.operator_status import build_operator_status
+from findmejobs.cli.workflows import run_daily_run_workflow, run_onboarding_workflow
+
 app = typer.Typer(
     help="Single-host job intelligence CLI. Typical flow: ingest → rank → review export → digest send.",
     no_args_is_help=True,
-    epilog="Command groups: config, review, profile, ranking, digest, feedback, reprocess, jobs, sources — use e.g. `config --help`.",
+    epilog=(
+        "Command groups: config, onboarding, review, profile, ranking, digest, feedback, reprocess, jobs, "
+        "applications, sources — plus top-level ingest, rank, status, daily-run, doctor, report."
+    ),
 )
 config_app = typer.Typer(help="Config initialization, validation, and effective resolved values")
 review_app = typer.Typer(help="Sanitized review packets (export to outbox, import results from inbox)")
@@ -83,6 +92,8 @@ ranking_app = typer.Typer(help="Inspect or adjust deterministic ranking (config/
 jobs_app = typer.Typer(help="Inspect stored jobs (ranked previews for the current profile)")
 sources_app = typer.Typer(help="Add/list/update validated source definitions in config/sources.yaml")
 submissions_app = typer.Typer(help="Track human-triggered application submissions and outcomes")
+onboarding_app = typer.Typer(help="First-time operator setup checks (composed CLI steps)")
+applications_app = typer.Typer(help="Per-job application drafting state (read-only queues)")
 app.add_typer(config_app, name="config")
 app.add_typer(review_app, name="review")
 app.add_typer(profile_app, name="profile")
@@ -93,6 +104,8 @@ app.add_typer(ranking_app, name="ranking")
 app.add_typer(jobs_app, name="jobs")
 app.add_typer(sources_app, name="sources")
 app.add_typer(submissions_app, name="submissions")
+app.add_typer(onboarding_app, name="onboarding")
+app.add_typer(applications_app, name="applications")
 
 
 def _version_option(value: bool) -> None:
@@ -134,6 +147,8 @@ ranking_app.callback(invoke_without_command=True)(_typer_group_show_help_callbac
 jobs_app.callback(invoke_without_command=True)(_typer_group_show_help_callback)
 sources_app.callback(invoke_without_command=True)(_typer_group_show_help_callback)
 submissions_app.callback(invoke_without_command=True)(_typer_group_show_help_callback)
+onboarding_app.callback(invoke_without_command=True)(_typer_group_show_help_callback)
+applications_app.callback(invoke_without_command=True)(_typer_group_show_help_callback)
 
 LOGGER = logging.getLogger(__name__)
 SUBMISSION_STATUSES = {"submitted", "interview", "rejected", "offer", "withdrawn"}
@@ -170,6 +185,45 @@ def _emit_json(json_out: bool, payload: dict, text: str | None = None) -> None:
         return
     if text is not None:
         typer.echo(text)
+
+
+def _emit_standard_envelope(
+    json_out: bool,
+    command: str,
+    ok: bool,
+    *,
+    summary: dict[str, Any] | None = None,
+    warnings: list[str] | None = None,
+    errors: list[str] | None = None,
+    artifacts: dict[str, Any] | None = None,
+    meta_extra: dict[str, Any] | None = None,
+    text: str | None = None,
+) -> None:
+    meta = meta_standard()
+    if meta_extra:
+        meta.update(meta_extra)
+    env = cli_envelope(
+        command,
+        ok,
+        summary=summary or {},
+        warnings=warnings or [],
+        errors=errors or [],
+        artifacts=artifacts or {},
+        meta=meta,
+    )
+    emit_envelope(json_out, env, text=text)
+
+
+def _artifacts_for_ui_export(
+    enabled: bool,
+    *,
+    app_config_path: Path,
+    profile_path: Path | None = None,
+    sources_path: Path | None = None,
+) -> dict[str, Any]:
+    if not enabled:
+        return {"status": "skipped", "message": "export_ui_data_not_requested", "script_path": None}
+    return dict(_run_ui_data_export_script(app_config_path, profile_path=profile_path, sources_path=sources_path))
 
 
 def _run_ui_data_export_script(
@@ -226,32 +280,16 @@ def _run_ui_data_export_script(
     }
 
 
-def _attach_ui_export(
-    payload: dict[str, object],
-    *,
-    enabled: bool,
-    app_config_path: Path,
-    profile_path: Path | None = None,
-    sources_path: Path | None = None,
-) -> dict[str, object]:
-    if enabled:
-        payload["ui_export"] = _run_ui_data_export_script(
-            app_config_path,
-            profile_path=profile_path,
-            sources_path=sources_path,
-        )
-    return payload
-
-
-def _echo_ui_export_status(payload: dict[str, object], *, enabled: bool) -> None:
-    if not enabled:
+def _echo_ui_export_status(ui_export: dict[str, object] | None, *, enabled: bool) -> None:
+    if ui_export is None:
         return
-    ui_export = payload.get("ui_export", {})
-    if isinstance(ui_export, dict) and ui_export.get("status") == "ok":
+    if not enabled:
+        typer.echo("ui data export: skipped (pass --export-ui-data to run scripts/export_ui_data.sh)")
+        return
+    if ui_export.get("status") == "ok":
         typer.echo(f"ui export: {ui_export.get('message')}")
         return
-    if isinstance(ui_export, dict):
-        typer.echo(f"warning: {ui_export.get('message')}")
+    typer.echo(f"warning: {ui_export.get('message')}")
 
 
 def _pipeline_lock_path(app_config) -> Path:
@@ -330,8 +368,17 @@ def config_init(
     else:
         write_sources_file(sources_path, SourcesFileConfig(version="v1", sources=[]))
         written.append(str(sources_path))
-    payload = {"command": "config_init", "status": "ok", "written": written, "skipped": skipped}
-    _emit_json(json_out, payload, f"config init: wrote={len(written)} skipped={len(skipped)}")
+    if json_out:
+        _emit_standard_envelope(
+            json_out,
+            "config_init",
+            True,
+            summary={"written": written, "skipped": skipped},
+            artifacts={"config_root": str(config_root.resolve())},
+            text=None,
+        )
+    else:
+        typer.echo(f"config init: wrote={len(written)} skipped={len(skipped)}")
 
 
 @config_app.command("validate")
@@ -357,24 +404,28 @@ def config_validate(
     except Exception as exc:  # noqa: BLE001
         sources = []
         errors.append(f"sources_config_invalid:{exc}")
-    payload = {
-        "command": "config_validate",
-        "status": "ok" if not errors else "failed",
-        "errors": errors,
-        "summary": {
-            "app_config_path": str(app_config_path),
-            "profile_path": str(profile_path),
-            "sources_path": str(sources_path),
-            "source_count": len(sources),
-            "profile_version": getattr(profile, "version", None),
-            "rank_model_version": getattr(profile, "rank_model_version", None),
-            "database_url": app_config.database.url if app_config is not None else None,
-        },
+    ok = not errors
+    summary = {
+        "app_config_path": str(app_config_path),
+        "profile_path": str(profile_path),
+        "sources_path": str(sources_path),
+        "source_count": len(sources),
+        "profile_version": getattr(profile, "version", None),
+        "rank_model_version": getattr(profile, "rank_model_version", None),
+        "database_url": app_config.database.url if app_config is not None else None,
+        "validation_errors": errors,
     }
     if errors:
-        _emit_json(json_out, payload, f"config validate failed: {errors}")
+        _emit_standard_envelope(
+            json_out,
+            "config_validate",
+            False,
+            summary=summary,
+            errors=errors,
+            text=f"config validate failed: {errors}",
+        )
         raise typer.Exit(code=1)
-    _emit_json(json_out, payload, "config validate: ok")
+    _emit_standard_envelope(json_out, "config_validate", ok, summary=summary, text="config validate: ok")
 
 
 @config_app.command("show-effective")
@@ -387,20 +438,139 @@ def config_show_effective(
     app_config = load_app_config(app_config_path)
     profile = load_profile_config(profile_path)
     sources = load_source_configs(sources_path)
-    payload = {
-        "command": "config_show_effective",
-        "status": "ok",
-        "paths": {
-            "app_config_path": str(app_config_path.resolve()),
-            "profile_path": str(profile_path.resolve()),
-            "ranking_path": str(profile_path.with_name("ranking.yaml").resolve()),
-            "sources_path": str(sources_path.resolve()),
-        },
+    paths = {
+        "app_config_path": str(app_config_path.resolve()),
+        "profile_path": str(profile_path.resolve()),
+        "ranking_path": str(profile_path.with_name("ranking.yaml").resolve()),
+        "sources_path": str(sources_path.resolve()),
+    }
+    summary = {
         "app": app_config.model_dump(mode="json"),
         "profile": profile.model_dump(mode="json"),
         "sources": [source.model_dump(mode="json") for source in sources],
     }
-    _emit_json(json_out, payload, json.dumps(payload, indent=2))
+    if json_out:
+        _emit_standard_envelope(
+            json_out,
+            "config_show_effective",
+            True,
+            summary=summary,
+            artifacts={"paths": paths},
+        )
+    else:
+        typer.echo(json.dumps({"paths": paths, **summary}, indent=2, default=str))
+
+
+@app.command()
+def status(
+    app_config_path: Path = typer.Option(Path("config/app.toml"), exists=True),
+    profile_path: Path = typer.Option(Path("config/profile.yaml")),
+    sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
+    applications_state_root: Path = typer.Option(Path("state/applications")),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    """Single snapshot of operational readiness, pipeline recency, and queue counts."""
+    app_config = load_app_config(app_config_path)
+    ensure_directories(
+        [
+            app_config.storage.root_dir,
+            app_config.storage.raw_dir,
+            app_config.storage.review_outbox_dir,
+            app_config.storage.review_inbox_dir,
+            app_config.storage.lock_dir,
+        ]
+    )
+    configure_logging(app_config.logging.level)
+    session_factory = create_session_factory(app_config.database.url)
+    profile = None
+    try:
+        profile = load_profile_config(resolve_profile_config_path(profile_path))
+    except (FileNotFoundError, ValidationError, ValueError):
+        pass
+    with session_factory() as session:
+        snap = build_operator_status(
+            session,
+            app_config,
+            profile=profile,
+            app_config_path=app_config_path,
+            profile_path=profile_path,
+            sources_path=sources_path,
+            applications_state_root=applications_state_root,
+        )
+    ok = bool(snap.pop("ok"))
+    warnings = snap.pop("warnings")
+    errors = snap.pop("errors")
+    paths = snap.pop("paths")
+    inner_meta = snap.pop("meta", {})
+    if json_out:
+        _emit_standard_envelope(
+            json_out,
+            "status",
+            ok,
+            summary=snap,
+            warnings=warnings,
+            errors=errors,
+            artifacts={"paths": paths},
+            meta_extra=inner_meta,
+        )
+    else:
+        typer.echo(json.dumps({"ok": ok, **snap, "warnings": warnings, "errors": errors, "paths": paths}, indent=2, default=str))
+    if not ok:
+        raise typer.Exit(code=1)
+
+
+@app.command("daily-run")
+def daily_run(
+    app_config_path: Path = typer.Option(Path("config/app.toml"), exists=True),
+    profile_path: Path = typer.Option(Path("config/profile.yaml")),
+    sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    send_digest: bool = typer.Option(False, "--send-digest", help="Send digest even when delivery.email.enabled is false."),
+    skip_digest: bool = typer.Option(False, "--skip-digest", help="Do not run digest send."),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    env = run_daily_run_workflow(
+        app_config_path=app_config_path,
+        profile_path=profile_path,
+        sources_path=sources_path,
+        dry_run=dry_run,
+        send_digest=send_digest,
+        skip_digest=skip_digest,
+    )
+    if json_out:
+        typer.echo(json.dumps(env, indent=2, default=str))
+    else:
+        typer.echo(f"daily-run ok={env.get('ok')} step_count={len(env.get('summary', {}).get('steps', []))}")
+    if not env.get("ok"):
+        raise typer.Exit(code=1)
+
+
+@onboarding_app.command("run")
+def onboarding_run(
+    config_root: Path = typer.Option(Path("config"), "--config-root"),
+    app_config_path: Path = typer.Option(Path("config/app.toml"), exists=True),
+    profile_path: Path = typer.Option(Path("config/profile.yaml")),
+    sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
+    profile_bootstrap_state: Path = typer.Option(Path("state/profile_bootstrap"), "--profile-state-root"),
+    resume_file: Path | None = typer.Option(None, "--resume-file", exists=True, dir_okay=False),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    env = run_onboarding_workflow(
+        config_root=config_root,
+        app_config_path=app_config_path,
+        profile_path=profile_path,
+        sources_path=sources_path,
+        profile_bootstrap_state=profile_bootstrap_state,
+        dry_run=dry_run,
+        resume_file=resume_file,
+    )
+    if json_out:
+        typer.echo(json.dumps(env, indent=2, default=str))
+    else:
+        typer.echo(f"onboarding run ok={env.get('ok')} step_count={len(env.get('summary', {}).get('steps', []))}")
+    if not env.get("ok"):
+        raise typer.Exit(code=1)
 
 
 @app.command()
@@ -430,7 +600,14 @@ def ingest(
                 f"No source configs matched --source {source!r}. "
                 f"Use names (or kinds) from source config under {sources_path} (names: {names})."
             )
-            _emit_json(json_out, {"command": "ingest", "status": "failed", "error": "no_matching_sources", "message": message}, message)
+            _emit_standard_envelope(
+                json_out,
+                "ingest",
+                False,
+                summary={"error_code": "no_matching_sources", "message": message},
+                errors=[message],
+                text=message,
+            )
             raise typer.Exit(code=1)
     if sources and not any(s.enabled for s in sources):
         n = len(sources)
@@ -441,7 +618,14 @@ def ingest(
             f"Enable at least one in sources.yaml or adjust --source. "
             f"Matching names: {selected}."
         )
-        _emit_json(json_out, {"command": "ingest", "status": "failed", "error": "all_selected_sources_disabled", "message": message}, message)
+        _emit_standard_envelope(
+            json_out,
+            "ingest",
+            False,
+            summary={"error_code": "all_selected_sources_disabled", "message": message},
+            errors=[message],
+            text=message,
+        )
         raise typer.Exit(code=1)
     with FileLock(_pipeline_lock_path(app_config)):
         with session_factory() as session:
@@ -453,24 +637,36 @@ def ingest(
                     error_message = f"{counts['failed_sources']} source(s) failed during ingest"
                     finish_pipeline_run(run, "failed", counts, error_message=error_message)
                     session.commit()
-                    _emit_json(
+                    _emit_standard_envelope(
                         json_out,
-                        {"command": "ingest", "status": "failed", "counts": counts, "error_message": error_message},
-                        f"ingest failed: {counts}",
+                        "ingest",
+                        False,
+                        summary={"counts": counts, "error_message": error_message},
+                        errors=[error_message],
+                        text=f"ingest failed: {counts}",
                     )
                     raise typer.Exit(code=1)
                 finish_pipeline_run(run, "success", counts)
                 session.commit()
-                _emit_json(json_out, {"command": "ingest", "status": "ok", "counts": counts}, f"ingest complete: {counts}")
+                _emit_standard_envelope(
+                    json_out,
+                    "ingest",
+                    True,
+                    summary={"counts": counts},
+                    text=f"ingest complete: {counts}",
+                )
             except typer.Exit:
                 raise
             except Exception as exc:
                 finish_pipeline_run(run, "failed", error_message=str(exc))
                 session.commit()
-                _emit_json(
+                _emit_standard_envelope(
                     json_out,
-                    {"command": "ingest", "status": "failed", "error": str(exc)},
-                    f"ingest failed: {exc}",
+                    "ingest",
+                    False,
+                    summary={"error": str(exc)},
+                    errors=[str(exc)],
+                    text=f"ingest failed: {exc}",
                 )
                 raise
 
@@ -481,9 +677,9 @@ def rank(
     profile_path: Path = typer.Option(Path("config/profile.yaml")),
     sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
     export_ui_data: bool = typer.Option(
-        True,
+        False,
         "--export-ui-data/--no-export-ui-data",
-        help="Run scripts/export_ui_data.sh after successful rank (default: on).",
+        help="Run scripts/export_ui_data.sh after successful rank (default: off).",
     ),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
@@ -532,9 +728,13 @@ def rank(
                 }
                 finish_pipeline_run(run, "success", rank_stats)
                 session.commit()
-                payload = {
-                    "command": "rank",
-                    "status": "ok",
+                ui_art = _artifacts_for_ui_export(
+                    export_ui_data,
+                    app_config_path=app_config_path,
+                    profile_path=profile_path,
+                    sources_path=sources_path,
+                )
+                summary = {
                     "scored": scored,
                     "total_scored": scored,
                     "filtered": filtered,
@@ -543,33 +743,34 @@ def rank(
                     "model_version": profile.rank_model_version,
                     "hard_filter_reason_counts": dict(sorted(hard_filter_hits.items())),
                 }
-                _attach_ui_export(
-                    payload,
-                    enabled=export_ui_data,
-                    app_config_path=app_config_path,
-                    profile_path=profile_path,
-                    sources_path=sources_path,
+                _emit_standard_envelope(
+                    json_out,
+                    "rank",
+                    True,
+                    summary=summary,
+                    artifacts={"ui_export": ui_art},
+                    text=f"rank complete: scored={scored} filtered={filtered}",
                 )
-                if json_out:
-                    typer.echo(json.dumps(payload, indent=2))
-                else:
-                    typer.echo(f"rank complete: scored={scored} filtered={filtered}")
+                if not json_out:
                     if hard_filter_hits:
                         parts = ", ".join(f"{reason}={count}" for reason, count in sorted(hard_filter_hits.items()))
                         typer.echo(
                             "hard filter reasons (hits; a job with multiple reasons adds to each): "
                             + parts
                         )
-                    _echo_ui_export_status(payload, enabled=export_ui_data)
+                    _echo_ui_export_status(ui_art, enabled=export_ui_data)
             except typer.Exit:
                 raise
             except Exception as exc:
                 finish_pipeline_run(run, "failed", error_message=str(exc))
                 session.commit()
-                _emit_json(
+                _emit_standard_envelope(
                     json_out,
-                    {"command": "rank", "status": "failed", "error": str(exc)},
-                    f"rank failed: {exc}",
+                    "rank",
+                    False,
+                    summary={"error": str(exc)},
+                    errors=[str(exc)],
+                    text=f"rank failed: {exc}",
                 )
                 raise
 
@@ -591,28 +792,62 @@ def _run_review_import_results(
                 imported = import_review_packets(session, app_config, new_id)
                 finish_pipeline_run(run, "success", {"imported": imported})
                 session.commit()
-                payload: dict[str, object] = {"command": "review_import", "status": "ok", "imported": imported}
-                _attach_ui_export(
-                    payload,
-                    enabled=export_ui_data,
+                ui_art = _artifacts_for_ui_export(
+                    export_ui_data,
                     app_config_path=app_config_path,
                     profile_path=profile_path,
                     sources_path=sources_path,
                 )
-                _emit_json(json_out, payload, f"review import complete: imported={imported}")
+                _emit_standard_envelope(
+                    json_out,
+                    "review_import",
+                    True,
+                    summary={"imported": imported},
+                    artifacts={"ui_export": ui_art},
+                    text=f"review import complete: imported={imported}",
+                )
                 if not json_out:
-                    _echo_ui_export_status(payload, enabled=export_ui_data)
+                    _echo_ui_export_status(ui_art, enabled=export_ui_data)
             except typer.Exit:
                 raise
             except Exception as exc:
                 finish_pipeline_run(run, "failed", error_message=str(exc))
                 session.commit()
-                _emit_json(
+                _emit_standard_envelope(
                     json_out,
-                    {"command": "review_import", "status": "failed", "error": str(exc)},
-                    f"review import failed: {exc}",
+                    "review_import",
+                    False,
+                    summary={"error": str(exc)},
+                    errors=[str(exc)],
+                    text=f"review import failed: {exc}",
                 )
                 raise
+
+
+@review_app.command("queue")
+def review_queue(
+    app_config_path: Path = typer.Option(Path("config/app.toml"), exists=True),
+    profile_path: Path = typer.Option(Path("config/profile.yaml")),
+    sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
+    limit: int = typer.Option(50, "--limit", min=1, max=500),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    """Jobs eligible for review export / OpenClaw work (no imported review row yet)."""
+    _app_config, profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_path)
+    with session_factory() as session:
+        rows = fetch_review_queue_rows(session, profile, limit=limit)
+    if json_out:
+        _emit_standard_envelope(
+            json_out,
+            "review_queue",
+            True,
+            summary={"limit": limit, "row_count": len(rows), "rows": rows},
+        )
+    else:
+        for row in rows:
+            typer.echo(
+                f"{row['job_id']}\tscore={row['score_total']}\t{row['company_name']}\t{row['title']}\tpacket={row['review_packet_status']}"
+            )
 
 
 @review_app.command("export")
@@ -621,9 +856,9 @@ def review_export(
     profile_path: Path = typer.Option(Path("config/profile.yaml")),
     sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
     export_ui_data: bool = typer.Option(
-        True,
+        False,
         "--export-ui-data/--no-export-ui-data",
-        help="Run scripts/export_ui_data.sh after successful export (default: on).",
+        help="Run scripts/export_ui_data.sh after successful export (default: off).",
     ),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
@@ -636,26 +871,34 @@ def review_export(
                 exported = export_review_packets(session, app_config, profile, new_id)
                 finish_pipeline_run(run, "success", {"exported": exported})
                 session.commit()
-                payload: dict[str, object] = {"command": "review_export", "status": "ok", "exported": exported}
-                _attach_ui_export(
-                    payload,
-                    enabled=export_ui_data,
+                ui_art = _artifacts_for_ui_export(
+                    export_ui_data,
                     app_config_path=app_config_path,
                     profile_path=profile_path,
                     sources_path=sources_path,
                 )
-                _emit_json(json_out, payload, f"review export complete: exported={exported}")
+                _emit_standard_envelope(
+                    json_out,
+                    "review_export",
+                    True,
+                    summary={"exported": exported},
+                    artifacts={"ui_export": ui_art},
+                    text=f"review export complete: exported={exported}",
+                )
                 if not json_out:
-                    _echo_ui_export_status(payload, enabled=export_ui_data)
+                    _echo_ui_export_status(ui_art, enabled=export_ui_data)
             except typer.Exit:
                 raise
             except Exception as exc:
                 finish_pipeline_run(run, "failed", error_message=str(exc))
                 session.commit()
-                _emit_json(
+                _emit_standard_envelope(
                     json_out,
-                    {"command": "review_export", "status": "failed", "error": str(exc)},
-                    f"review export failed: {exc}",
+                    "review_export",
+                    False,
+                    summary={"error": str(exc)},
+                    errors=[str(exc)],
+                    text=f"review export failed: {exc}",
                 )
                 raise
 
@@ -666,9 +909,9 @@ def review_import_results(
     profile_path: Path = typer.Option(Path("config/profile.yaml")),
     sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
     export_ui_data: bool = typer.Option(
-        True,
+        False,
         "--export-ui-data/--no-export-ui-data",
-        help="Run scripts/export_ui_data.sh after successful import (default: on).",
+        help="Run scripts/export_ui_data.sh after successful import (default: off).",
     ),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
@@ -687,9 +930,9 @@ def review_import_openclaw_results(
     profile_path: Path = typer.Option(Path("config/profile.yaml")),
     sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
     export_ui_data: bool = typer.Option(
-        True,
+        False,
         "--export-ui-data/--no-export-ui-data",
-        help="Run scripts/export_ui_data.sh after successful import (default: on).",
+        help="Run scripts/export_ui_data.sh after successful import (default: off).",
     ),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
@@ -711,9 +954,9 @@ def digest_send(
     digest_date: str | None = typer.Option(None),
     dry_run: bool = typer.Option(False, help="Build digest without sending email"),
     export_ui_data: bool = typer.Option(
-        True,
+        False,
         "--export-ui-data/--no-export-ui-data",
-        help="Run scripts/export_ui_data.sh after successful digest send (default: on).",
+        help="Run scripts/export_ui_data.sh after successful digest send (default: off).",
     ),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
@@ -726,45 +969,45 @@ def digest_send(
                 digest = send_digest(session, app_config, profile, id_factory=new_id, digest_date=digest_date, dry_run=dry_run)
                 finish_pipeline_run(run, "success", {"digest_id": digest.id, "status": digest.status, "dry_run": dry_run})
                 session.commit()
+                ui_art = _artifacts_for_ui_export(
+                    export_ui_data,
+                    app_config_path=app_config_path,
+                    profile_path=profile_path,
+                    sources_path=sources_path,
+                )
+                summary: dict[str, Any] = {
+                    "dry_run": dry_run,
+                    "digest_id": digest.id,
+                    "digest_status": digest.status,
+                }
                 if dry_run:
-                    payload: dict[str, object] = {
-                        "command": "digest_send",
-                        "status": "ok",
-                        "dry_run": True,
-                        "digest_id": digest.id,
-                        "digest_status": digest.status,
-                        "body_text": digest.body_text,
-                    }
-                    _attach_ui_export(
-                        payload,
-                        enabled=export_ui_data,
-                        app_config_path=app_config_path,
-                        profile_path=profile_path,
-                        sources_path=sources_path,
-                    )
-                    _emit_json(json_out, payload, f"digest dry-run complete: digest_id={digest.id} items={len(digest.body_text.splitlines())}")
-                    if not json_out:
-                        typer.echo(digest.body_text)
-                        _echo_ui_export_status(payload, enabled=export_ui_data)
-                else:
-                    payload = {"command": "digest_send", "status": "ok", "dry_run": False, "digest_id": digest.id, "digest_status": digest.status}
-                    _attach_ui_export(
-                        payload,
-                        enabled=export_ui_data,
-                        app_config_path=app_config_path,
-                        profile_path=profile_path,
-                        sources_path=sources_path,
-                    )
-                    _emit_json(json_out, payload, f"digest send complete: digest_id={digest.id} status={digest.status}")
-                    if not json_out:
-                        _echo_ui_export_status(payload, enabled=export_ui_data)
+                    summary["body_text"] = digest.body_text
+                _emit_standard_envelope(
+                    json_out,
+                    "digest_send",
+                    True,
+                    summary=summary,
+                    artifacts={"ui_export": ui_art},
+                    text=(
+                        f"digest dry-run complete: digest_id={digest.id} items={len(digest.body_text.splitlines())}"
+                        if dry_run
+                        else f"digest send complete: digest_id={digest.id} status={digest.status}"
+                    ),
+                )
+                if not json_out and dry_run:
+                    typer.echo(digest.body_text)
+                if not json_out:
+                    _echo_ui_export_status(ui_art, enabled=export_ui_data)
             except Exception as exc:
                 finish_pipeline_run(run, "failed", error_message=str(exc))
                 session.commit()
-                _emit_json(
+                _emit_standard_envelope(
                     json_out,
-                    {"command": "digest_send", "status": "failed", "error": str(exc)},
-                    f"digest send failed: {exc}",
+                    "digest_send",
+                    False,
+                    summary={"error": str(exc)},
+                    errors=[str(exc)],
+                    text=f"digest send failed: {exc}",
                 )
                 raise typer.Exit(code=1)
 
@@ -777,9 +1020,9 @@ def digest_resend(
     digest_date: str = typer.Option(...),
     dry_run: bool = typer.Option(False, help="Build digest without sending email"),
     export_ui_data: bool = typer.Option(
-        True,
+        False,
         "--export-ui-data/--no-export-ui-data",
-        help="Run scripts/export_ui_data.sh after successful digest resend (default: on).",
+        help="Run scripts/export_ui_data.sh after successful digest resend (default: off).",
     ),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
@@ -788,10 +1031,14 @@ def digest_resend(
         with session_factory() as session:
             original = session.scalar(select(Digest).where(Digest.digest_date == digest_date).order_by(Digest.sent_at.desc()))
             if original is None:
-                _emit_json(
+                msg = f"no_digest_for_date:{digest_date}"
+                _emit_standard_envelope(
                     json_out,
-                    {"command": "digest_resend", "status": "failed", "error": f"no_digest_for_date:{digest_date}"},
-                    f"digest resend failed: no digest for {digest_date}",
+                    "digest_resend",
+                    False,
+                    summary={"error_code": "no_digest_for_date", "digest_date": digest_date},
+                    errors=[msg],
+                    text=f"digest resend failed: no digest for {digest_date}",
                 )
                 raise typer.Exit(code=1)
             run = create_pipeline_run(session, "digest_resend", new_id)
@@ -808,53 +1055,46 @@ def digest_resend(
                 )
                 finish_pipeline_run(run, "success", {"digest_id": digest.id, "status": digest.status, "resend_of": original.id, "dry_run": dry_run})
                 session.commit()
+                ui_art = _artifacts_for_ui_export(
+                    export_ui_data,
+                    app_config_path=app_config_path,
+                    profile_path=profile_path,
+                    sources_path=sources_path,
+                )
+                summary = {
+                    "dry_run": dry_run,
+                    "digest_id": digest.id,
+                    "digest_status": digest.status,
+                    "resend_of": original.id,
+                }
                 if dry_run:
-                    payload: dict[str, object] = {
-                        "command": "digest_resend",
-                        "status": "ok",
-                        "dry_run": True,
-                        "digest_id": digest.id,
-                        "digest_status": digest.status,
-                        "resend_of": original.id,
-                        "body_text": digest.body_text,
-                    }
-                    _attach_ui_export(
-                        payload,
-                        enabled=export_ui_data,
-                        app_config_path=app_config_path,
-                        profile_path=profile_path,
-                        sources_path=sources_path,
-                    )
-                    _emit_json(json_out, payload, f"digest resend dry-run complete: digest_id={digest.id}")
-                    if not json_out:
-                        typer.echo(digest.body_text)
-                        _echo_ui_export_status(payload, enabled=export_ui_data)
-                else:
-                    payload = {
-                        "command": "digest_resend",
-                        "status": "ok",
-                        "dry_run": False,
-                        "digest_id": digest.id,
-                        "digest_status": digest.status,
-                        "resend_of": original.id,
-                    }
-                    _attach_ui_export(
-                        payload,
-                        enabled=export_ui_data,
-                        app_config_path=app_config_path,
-                        profile_path=profile_path,
-                        sources_path=sources_path,
-                    )
-                    _emit_json(json_out, payload, f"digest resend complete: digest_id={digest.id} status={digest.status}")
-                    if not json_out:
-                        _echo_ui_export_status(payload, enabled=export_ui_data)
+                    summary["body_text"] = digest.body_text
+                _emit_standard_envelope(
+                    json_out,
+                    "digest_resend",
+                    True,
+                    summary=summary,
+                    artifacts={"ui_export": ui_art},
+                    text=(
+                        f"digest resend dry-run complete: digest_id={digest.id}"
+                        if dry_run
+                        else f"digest resend complete: digest_id={digest.id} status={digest.status}"
+                    ),
+                )
+                if not json_out and dry_run:
+                    typer.echo(digest.body_text)
+                if not json_out:
+                    _echo_ui_export_status(ui_art, enabled=export_ui_data)
             except Exception as exc:
                 finish_pipeline_run(run, "failed", error_message=str(exc))
                 session.commit()
-                _emit_json(
+                _emit_standard_envelope(
                     json_out,
-                    {"command": "digest_resend", "status": "failed", "error": str(exc)},
-                    f"digest resend failed: {exc}",
+                    "digest_resend",
+                    False,
+                    summary={"error": str(exc)},
+                    errors=[str(exc)],
+                    text=f"digest resend failed: {exc}",
                 )
                 raise typer.Exit(code=1)
 
@@ -1135,19 +1375,48 @@ def jobs_list(
             snippet_length=snippet_length,
         )
     if json_out:
-        payload = {
-            "meta": {
-                "filter": "all_scored" if all_scored else "review_eligible",
-                "hint": (
-                    None
-                    if all_scored or previews
-                    else "Only passed hard filters and score ≥ ranking.minimum_score. "
-                    "Pass --all-scored to include hard_filtered and below_threshold rows in JSON/text."
-                ),
-            },
+        summary = {
+            "filter": "all_scored" if all_scored else "review_eligible",
+            "hint": (
+                None
+                if all_scored or previews
+                else "Only passed hard filters and score ≥ ranking.minimum_score. "
+                "Pass --all-scored to include hard_filtered and below_threshold rows in JSON/text."
+            ),
+            "limit": limit,
             "jobs": [p.to_json_dict() for p in previews],
         }
-        typer.echo(json.dumps(payload, indent=2))
+        _emit_standard_envelope(json_out, "jobs_list", True, summary=summary)
+    else:
+        typer.echo(format_job_previews_text(previews), nl=False)
+
+
+@jobs_app.command("top")
+def jobs_top(
+    app_config_path: Path = typer.Option(Path("config/app.toml"), exists=True),
+    profile_path: Path = typer.Option(Path("config/profile.yaml")),
+    sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
+    limit: int = typer.Option(20, "--limit", min=1, max=500),
+    snippet_length: int = typer.Option(200, "--snippet-length", min=20, max=2000),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    """Top-ranked jobs for quick operator/OpenClaw inspection (review-eligible rows by default)."""
+    _app_config, profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_path)
+    with session_factory() as session:
+        previews = fetch_job_previews(
+            session,
+            profile,
+            all_scored=False,
+            limit=limit,
+            snippet_length=snippet_length,
+        )
+    if json_out:
+        summary = {
+            "filter": "review_eligible",
+            "limit": limit,
+            "jobs": [p.to_json_dict() for p in previews],
+        }
+        _emit_standard_envelope(json_out, "jobs_top", True, summary=summary)
     else:
         typer.echo(format_job_previews_text(previews), nl=False)
 
@@ -1178,9 +1447,36 @@ def ranking_explain(
         ranking_path=str(ranking_path),
     )
     if json_out:
-        typer.echo(json.dumps(payload, indent=2))
+        _emit_standard_envelope(json_out, "ranking_explain", True, summary=payload)
     else:
         typer.echo(format_ranking_explain_text(payload), nl=False)
+
+
+@ranking_app.command("show")
+def ranking_show(
+    profile_path: Path = typer.Option(Path("config/profile.yaml")),
+    json_out: bool = typer.Option(False, "--json", help="Emit canonical ranking.yaml as validated structured JSON."),
+) -> None:
+    try:
+        resolved = resolve_profile_config_path(profile_path)
+    except FileNotFoundError as exc:
+        typer.echo(f"ranking show failed: {exc}")
+        raise typer.Exit(code=1)
+    ranking_path = resolved.with_name("ranking.yaml")
+    ranking = load_existing_ranking(ranking_path)
+    if ranking is None:
+        typer.echo(f"ranking show failed: missing {ranking_path}")
+        raise typer.Exit(code=1)
+    if json_out:
+        _emit_standard_envelope(
+            json_out,
+            "ranking_show",
+            True,
+            summary={"ranking": ranking.model_dump(mode="json")},
+            artifacts={"ranking_path": str(ranking_path.resolve())},
+        )
+    else:
+        typer.echo(json.dumps(ranking.model_dump(mode="json"), indent=2))
 
 
 @ranking_app.command("set")
@@ -1350,8 +1646,15 @@ def doctor(
     try:
         app_config, _profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_path)
     except (FileNotFoundError, ValidationError, ValueError) as exc:
-        payload = {"command": "doctor", "status": "failed", "errors": [f"invalid_profile_config:{exc}"]}
-        _emit_json(json_out, payload, f"doctor failed: {payload['errors']}")
+        errs = [f"invalid_profile_config:{exc}"]
+        _emit_standard_envelope(
+            json_out,
+            "doctor",
+            False,
+            summary={"strict": strict, "hints": {}},
+            errors=errs,
+            text=f"doctor failed: {errs}",
+        )
         raise typer.Exit(code=1)
     with session_factory() as session:
         errors = run_doctor(
@@ -1370,10 +1673,15 @@ def doctor(
     errors.extend(check_profile_config_health(profile_path.parent))
     if errors:
         hints = doctor_failure_hints(errors)
-        payload = {"command": "doctor", "status": "failed", "errors": errors, "hints": hints}
-        if json_out:
-            _emit_json(json_out, payload, None)
-        else:
+        _emit_standard_envelope(
+            json_out,
+            "doctor",
+            False,
+            summary={"strict": strict, "hints": hints},
+            errors=errors,
+            text=None,
+        )
+        if not json_out:
             typer.echo(f"doctor failed: {errors}")
             if hints:
                 typer.echo("")
@@ -1381,7 +1689,7 @@ def doctor(
                 for code, text in hints.items():
                     typer.echo(f"  • {code}: {text}")
         raise typer.Exit(code=1)
-    _emit_json(json_out, {"command": "doctor", "status": "ok", "errors": []}, "doctor ok")
+    _emit_standard_envelope(json_out, "doctor", True, summary={"strict": strict, "hints": {}}, text="doctor ok")
 
 
 def _profile_service(state_root: Path, config_root: Path) -> ProfileBootstrapService:
@@ -1401,9 +1709,9 @@ def prepare_application(
     sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
     state_root: Path = typer.Option(Path("state/applications")),
     export_ui_data: bool = typer.Option(
-        True,
+        False,
         "--export-ui-data/--no-export-ui-data",
-        help="Run scripts/export_ui_data.sh after successful prepare-application (default: on).",
+        help="Run scripts/export_ui_data.sh after successful prepare-application (default: off).",
     ),
 ) -> None:
     app_config, profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_path)
@@ -1428,14 +1736,13 @@ def prepare_application(
     )
     if blockers:
         typer.echo("readiness_blockers: " + ", ".join(blockers))
-    payload = _attach_ui_export(
-        {"command": "prepare_application"},
-        enabled=export_ui_data,
+    ui_art = _artifacts_for_ui_export(
+        export_ui_data,
         app_config_path=app_config_path,
         profile_path=profile_path,
         sources_path=sources_path,
     )
-    _echo_ui_export_status(payload, enabled=export_ui_data)
+    _echo_ui_export_status(ui_art, enabled=export_ui_data)
 
 
 @app.command("draft-cover-letter")
@@ -1447,9 +1754,9 @@ def draft_cover_letter(
     sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
     state_root: Path = typer.Option(Path("state/applications")),
     export_ui_data: bool = typer.Option(
-        True,
+        False,
         "--export-ui-data/--no-export-ui-data",
-        help="Run scripts/export_ui_data.sh after successful draft-cover-letter (default: on).",
+        help="Run scripts/export_ui_data.sh after successful draft-cover-letter (default: off).",
     ),
 ) -> None:
     app_config, profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_path)
@@ -1467,14 +1774,13 @@ def draft_cover_letter(
                 typer.echo(f"draft-cover-letter failed: {exc}")
                 raise typer.Exit(code=1)
     typer.echo(f"draft-cover-letter complete: job_id={draft.job_id} origin={draft.origin}")
-    payload = _attach_ui_export(
-        {"command": "draft_cover_letter"},
-        enabled=export_ui_data,
+    ui_art = _artifacts_for_ui_export(
+        export_ui_data,
         app_config_path=app_config_path,
         profile_path=profile_path,
         sources_path=sources_path,
     )
-    _echo_ui_export_status(payload, enabled=export_ui_data)
+    _echo_ui_export_status(ui_art, enabled=export_ui_data)
 
 
 @app.command("draft-answers")
@@ -1486,9 +1792,9 @@ def draft_answers(
     sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
     state_root: Path = typer.Option(Path("state/applications")),
     export_ui_data: bool = typer.Option(
-        True,
+        False,
         "--export-ui-data/--no-export-ui-data",
-        help="Run scripts/export_ui_data.sh after successful draft-answers (default: on).",
+        help="Run scripts/export_ui_data.sh after successful draft-answers (default: off).",
     ),
 ) -> None:
     app_config, profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_path)
@@ -1506,14 +1812,13 @@ def draft_answers(
                 typer.echo(f"draft-answers failed: {exc}")
                 raise typer.Exit(code=1)
     typer.echo(f"draft-answers complete: job_id={draft.job_id} answers={len(draft.answers)} origin={draft.origin}")
-    payload = _attach_ui_export(
-        {"command": "draft_answers"},
-        enabled=export_ui_data,
+    ui_art = _artifacts_for_ui_export(
+        export_ui_data,
         app_config_path=app_config_path,
         profile_path=profile_path,
         sources_path=sources_path,
     )
-    _echo_ui_export_status(payload, enabled=export_ui_data)
+    _echo_ui_export_status(ui_art, enabled=export_ui_data)
 
 
 @app.command("show-application")
@@ -1528,6 +1833,34 @@ def show_application(
         typer.echo(f"show-application failed: {exc}")
         raise typer.Exit(code=1)
     typer.echo(json.dumps(payload, indent=2, default=str))
+
+
+@applications_app.command("queue")
+def applications_queue(
+    app_config_path: Path = typer.Option(Path("config/app.toml"), exists=True),
+    profile_path: Path = typer.Option(Path("config/profile.yaml")),
+    sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
+    state_root: Path = typer.Option(Path("state/applications")),
+    limit: int = typer.Option(50, "--limit", min=1, max=500),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    """Ranked jobs that still need application packet, drafts, or OpenClaw follow-up."""
+    _app_config, profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_path)
+    with session_factory() as session:
+        rows = fetch_applications_queue_rows(session, profile, state_root, limit=limit)
+    if json_out:
+        _emit_standard_envelope(
+            json_out,
+            "applications_queue",
+            True,
+            summary={"limit": limit, "row_count": len(rows), "rows": rows},
+            artifacts={"applications_state_root": str(state_root.resolve())},
+        )
+    else:
+        for row in rows:
+            typer.echo(
+                f"{row['job_id']}\t{row['reason']}\tscore={row['score_total']}\t{row['company_name']}\t{row['title']}"
+            )
 
 
 @app.command("validate-application")
@@ -1556,9 +1889,9 @@ def regenerate_application(
     sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
     state_root: Path = typer.Option(Path("state/applications")),
     export_ui_data: bool = typer.Option(
-        True,
+        False,
         "--export-ui-data/--no-export-ui-data",
-        help="Run scripts/export_ui_data.sh after successful regenerate-application (default: on).",
+        help="Run scripts/export_ui_data.sh after successful regenerate-application (default: off).",
     ),
 ) -> None:
     app_config, profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_path)
@@ -1576,14 +1909,13 @@ def regenerate_application(
                 typer.echo(f"regenerate-application failed: {exc}")
                 raise typer.Exit(code=1)
     typer.echo(json.dumps(result, indent=2))
-    payload = _attach_ui_export(
-        {"command": "regenerate_application"},
-        enabled=export_ui_data,
+    ui_art = _artifacts_for_ui_export(
+        export_ui_data,
         app_config_path=app_config_path,
         profile_path=profile_path,
         sources_path=sources_path,
     )
-    _echo_ui_export_status(payload, enabled=export_ui_data)
+    _echo_ui_export_status(ui_art, enabled=export_ui_data)
 
 
 @app.command("draft-applications")
@@ -1597,9 +1929,9 @@ def draft_applications(
     fail_fast: bool = typer.Option(False, "--fail-fast", help="Stop on first per-job failure."),
     json_out: bool = typer.Option(False, "--json", help="Emit machine-readable batch output."),
     export_ui_data: bool = typer.Option(
-        True,
+        False,
         "--export-ui-data/--no-export-ui-data",
-        help="Run scripts/export_ui_data.sh after successful draft-applications (default: on).",
+        help="Run scripts/export_ui_data.sh after successful draft-applications (default: off).",
     ),
 ) -> None:
     app_config, profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_path)
@@ -1640,23 +1972,28 @@ def draft_applications(
                     failures.append({"job_id": preview.job_id, "error": str(exc)})
                     if fail_fast:
                         break
-    payload: dict[str, object] = {
-        "command": "draft_applications",
+    ui_art = _artifacts_for_ui_export(
+        export_ui_data,
+        app_config_path=app_config_path,
+        profile_path=profile_path,
+        sources_path=sources_path,
+    )
+    summary = {
         "selected_jobs": selected_jobs,
         "processed": len(results),
         "failed": len(failures),
         "results": results,
         "failures": failures,
     }
-    payload = _attach_ui_export(
-        payload,
-        enabled=export_ui_data,
-        app_config_path=app_config_path,
-        profile_path=profile_path,
-        sources_path=sources_path,
-    )
+    ok = len(failures) == 0
     if json_out:
-        _emit_json(True, payload)
+        _emit_standard_envelope(
+            json_out,
+            "draft_applications",
+            ok,
+            summary=summary,
+            artifacts={"ui_export": ui_art},
+        )
     else:
         typer.echo(
             f"draft-applications complete: selected={selected_jobs} processed={len(results)} failed={len(failures)}"
@@ -1675,7 +2012,7 @@ def draft_applications(
             typer.echo("failed_jobs:")
             for item in failures:
                 typer.echo(f"- {item['job_id']}: {item['error']}")
-    _echo_ui_export_status(payload, enabled=export_ui_data)
+    _echo_ui_export_status(ui_art, enabled=export_ui_data)
     if failures:
         raise typer.Exit(code=1)
 
@@ -1894,6 +2231,29 @@ def profile_set(
     )
 
 
+@profile_app.command("show")
+def profile_show(
+    profile_path: Path = typer.Option(Path("config/profile.yaml")),
+    json_out: bool = typer.Option(False, "--json", help="Emit canonical merged profile as structured JSON."),
+) -> None:
+    try:
+        resolved = resolve_profile_config_path(profile_path)
+    except FileNotFoundError as exc:
+        typer.echo(f"profile show failed: {exc}")
+        raise typer.Exit(code=1)
+    profile = load_profile_config(profile_path)
+    if json_out:
+        _emit_standard_envelope(
+            json_out,
+            "profile_show",
+            True,
+            summary={"profile": profile.model_dump(mode="json")},
+            artifacts={"profile_path": str(resolved.resolve())},
+        )
+    else:
+        typer.echo(json.dumps(profile.model_dump(mode="json"), indent=2, default=str))
+
+
 @sources_app.command("list")
 def sources_list(
     sources_path: Path = typer.Option(
@@ -1911,13 +2271,13 @@ def sources_list(
         _emit_json(json_out, {"command": "sources_list", "status": "failed", "error": str(exc)}, f"sources list failed: {exc}")
         raise typer.Exit(code=1)
     if json_out:
-        payload = {
-            "command": "sources_list",
-            "status": "ok",
-            "sources_path": str(sources_path.resolve()),
-            "sources": [cfg.model_dump(mode="json") for cfg in rows],
-        }
-        typer.echo(json.dumps(payload, indent=2))
+        _emit_standard_envelope(
+            json_out,
+            "sources_list",
+            True,
+            summary={"sources": [cfg.model_dump(mode="json") for cfg in rows]},
+            artifacts={"sources_path": str(sources_path.resolve())},
+        )
         return
     for cfg in rows:
         typer.echo(f"{cfg.name}\t{cfg.kind}\tenabled={cfg.enabled}")

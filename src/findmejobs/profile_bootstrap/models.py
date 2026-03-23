@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from findmejobs.config.models import RankingWeights
+from findmejobs.config.models import ApplicationProfile, RankingWeights
 from findmejobs.utils.text import collapse_whitespace
 
 
@@ -29,6 +29,7 @@ class ImportMetadata(BaseModel):
 
 class ProfileConfigDraft(BaseModel):
     version: str = "bootstrap-v1"
+    application: ApplicationProfile | None = None
     full_name: str | None = None
     headline: str | None = None
     email: str | None = None

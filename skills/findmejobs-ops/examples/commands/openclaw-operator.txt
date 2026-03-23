@@ -1,0 +1,12 @@
+# Operator sequence (copy as needed; adjust paths)
+
+findmejobs onboarding run --json
+findmejobs status --json
+findmejobs daily-run --json
+findmejobs review queue --json
+findmejobs jobs top --limit 20 --json
+findmejobs applications queue --json
+findmejobs profile show --json
+findmejobs ranking show --json
+findmejobs doctor --json
+findmejobs config validate --json

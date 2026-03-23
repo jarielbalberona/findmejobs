@@ -157,9 +157,35 @@ findmejobs review import
 findmejobs report
 ```
 
+### OpenClaw / agent operation (`--json`)
+
+Prefer machine-readable output for assistants. Common sequence:
+
+```bash
+findmejobs onboarding run --json
+findmejobs status --json
+findmejobs daily-run --json
+findmejobs review queue --json
+findmejobs jobs top --limit 20 --json
+```
+
+Use `--dry-run` on `onboarding run` and `daily-run` to list planned steps without executing ingest/rank/etc.
+
+Read-only inspection without opening YAML on disk:
+
+```bash
+findmejobs profile show --json
+findmejobs ranking show --json
+findmejobs applications queue --json
+```
+
+JSON responses use a stable envelope: `ok`, `command`, `summary`, `warnings`, `errors`, `artifacts`, `meta` (see `AGENTS.md`). `status --json` exits non-zero when `ok` is false.
+
+Packaged operator skill: `skills/findmejobs-ops/SKILL.md`.
+
 Notes:
 
-- `findmejobs rank` runs `scripts/export_ui_data.sh` by default; disable with `--no-export-ui-data`.
+- `rank`, `review export`, `review import`, `digest send` / `resend`, and application drafting commands default to **not** running `scripts/export_ui_data.sh`; pass `--export-ui-data` when you want that side effect. In `--json` mode, `artifacts.ui_export` is always populated (`skipped` or run result).
 - `findmejobs doctor` may report onboarding-state warnings (for example no successful ingest yet) before first successful pipeline run.
 
 Useful variants:
@@ -167,7 +193,7 @@ Useful variants:
 ```bash
 findmejobs ingest --source greenhouse
 findmejobs jobs list --all-scored --limit 100
-findmejobs jobs list --json | jq '.jobs[:5]'
+findmejobs jobs list --json | jq '.summary.jobs[:5]'
 findmejobs ranking explain
 findmejobs ranking audit --fixture baseline
 findmejobs ranking set --minimum-score 40 --stale-days 45 --add-blocked-company "Bad Co"

@@ -6,7 +6,7 @@ from typing import Iterable
 
 from pydantic import TypeAdapter
 
-from findmejobs.config.models import AppConfig, ProfileConfig, RankingPolicy, SourceConfig, SourcesFileConfig
+from findmejobs.config.models import AppConfig, ApplicationProfile, ProfileConfig, RankingPolicy, SourceConfig, SourcesFileConfig
 from findmejobs.profile_bootstrap.models import ProfileConfigDraft, RankingConfigDraft
 from findmejobs.utils.yamlio import load_yaml
 
@@ -69,9 +69,13 @@ def _load_yaml_profile_config(profile_path: Path) -> ProfileConfig:
 
     raw_ranking = _load_yaml_mapping_or_legacy_toml(ranking_path)
     ranking = RankingConfigDraft.model_validate(raw_ranking)
-    application_payload = {}
-    if isinstance(raw_profile, dict) and isinstance(raw_profile.get("application"), dict):
-        application_payload = raw_profile["application"]
+    application_data: dict = {}
+    if profile.application is not None:
+        application_data = profile.application.model_dump(mode="python", exclude_none=True)
+    elif isinstance(raw_profile, dict) and isinstance(raw_profile.get("application"), dict):
+        application_data = dict(raw_profile["application"])
+    if not application_data.get("professional_summary") and profile.summary:
+        application_data = {**application_data, "professional_summary": profile.summary}
     return ProfileConfig(
         version=profile.version,
         rank_model_version=ranking.rank_model_version,
@@ -107,7 +111,7 @@ def _load_yaml_profile_config(profile_path: Path) -> ProfileConfig:
             title_families=ranking.title_families or {},
             weights=ranking.weights,
         ),
-        application=application_payload or {"professional_summary": profile.summary},
+        application=ApplicationProfile.model_validate(application_data),
     )
 
 

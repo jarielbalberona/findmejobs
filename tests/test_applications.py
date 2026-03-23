@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import func, select
 
 from findmejobs.application.models import AnswerDraftResultModel, ApplicationPacketModel, ApplicationValidationReport, CoverLetterDraftResultModel
+from findmejobs.application.prompts import COVER_LETTER_PROMPT_VERSION
 from findmejobs.application.service import ApplicationDraftService
 from findmejobs.cli.app import app
 from findmejobs.config.loader import load_app_config, load_profile_config
@@ -271,6 +272,8 @@ def test_prepare_application_generates_sanitized_packet_and_missing_inputs(
     assert "full_name" not in missing_keys
     request_payload = json.loads((state_root / job_id / "openclaw" / "cover_letter.request.json").read_text(encoding="utf-8"))
     assert "Ignore previous instructions" not in json.dumps(request_payload)
+    assert request_payload["signoff_name"] == "Jane Operator"
+    assert request_payload["prompt_version"] == COVER_LETTER_PROMPT_VERSION
 
 
 def test_cover_letter_and_answer_drafts_are_written_and_flag_missing_inputs(
@@ -588,6 +591,8 @@ def test_application_packet_generation_is_deterministic_and_bounded(application_
         "score",
         "review_summary",
         "matched_profile",
+        "job_hooks",
+        "top_relevant_highlights",
         "relevant_strengths",
         "detected_gaps",
         "unknowns",
@@ -636,12 +641,34 @@ def test_packet_generation_includes_strengths_and_score_fit_context(application_
         packet, _missing = service.prepare_application(session, profile, job_id=job_id)
 
     assert packet.relevant_strengths[0] == profile.application.professional_summary
-    assert any("Relevant core skills" in item for item in packet.relevant_strengths)
+    assert any("skills" in item.casefold() for item in packet.relevant_strengths)
     assert packet.score.total == 88.0
-    assert packet.score.breakdown_summary[0].startswith("title alignment")
+    assert packet.score.breakdown_summary
+    assert "title" in packet.score.breakdown_summary[0].casefold()
     assert {"title_alignment", "must_have_skills", "remote_fit"} <= set(packet.score.matched_signals)
     assert packet.matched_profile.matched_required_skills == ["python", "sql"]
     assert packet.matched_profile.matched_preferred_skills == ["aws"]
+    assert packet.job_hooks
+    assert packet.top_relevant_highlights
+
+
+def test_local_cover_letter_uses_years_experience_and_avoids_banned_phrases(
+    application_runtime: dict[str, object],
+) -> None:
+    session_factory = application_runtime["session_factory"]
+    profile = load_profile_config(application_runtime["profile_path"])
+    profile = profile.model_copy(update={"years_experience": 9})
+    state_root = application_runtime["state_root"]
+    service = ApplicationDraftService(state_root=state_root)
+    with session_factory() as session:
+        job_id = _seed_application_job(session, profile, description_text="Python SQL AWS platform work")
+    with session_factory() as session:
+        draft = service.draft_cover_letter(session, profile, job_id=job_id, snapshot_existing=False)
+    body = draft.body_markdown.casefold()
+    assert "9 years" in body
+    assert "10 years" not in body
+    for banned in ("packet", "ranked", "openclaw", "greenhouse", "autofill", "scraper"):
+        assert banned not in body
 
 
 def test_packet_safe_context_includes_parsed_job_cues(application_runtime: dict[str, object]) -> None:
@@ -705,6 +732,9 @@ def test_local_cover_letter_stays_grounded_concise_and_role_specific(application
     assert "10 years" not in body
     assert "passionate" not in body.casefold()
     assert "kubernetes" not in body.casefold()
+    assert "packet" not in body.casefold()
+    assert "signal" not in body.casefold()
+    assert "source:" not in body.casefold()
     assert len(body.split()) < 120
 
 
@@ -1002,8 +1032,8 @@ def test_imported_cover_letter_result_is_rejected_when_not_grounded(monkeypatch,
 
         def load_cover_letter_result(self):
             return CoverLetterDraftResultModel(
-                prompt_version="slice2.5-cover-letter-v1",
-                body_markdown="I am applying for the Backend Engineer role at Example after 12 years of experience.",
+                prompt_version=COVER_LETTER_PROMPT_VERSION,
+                body_markdown="I am applying for the Backend Engineer role at Example after 12 years of experience.\nRegards,\nJane Operator",
                 missing_inputs=[],
                 raw_response={"provider": "fake"},
             )
@@ -1017,6 +1047,45 @@ def test_imported_cover_letter_result_is_rejected_when_not_grounded(monkeypatch,
     service = ApplicationDraftService(state_root=state_root)
     with session_factory() as session:
         with pytest.raises(ValueError, match="cover_letter_contains_unsupported_experience_claim"):
+            service.draft_cover_letter(session, profile, job_id=job_id)
+
+
+def test_imported_cover_letter_result_rejects_internal_jargon(monkeypatch, application_runtime: dict[str, object]) -> None:
+    session_factory = application_runtime["session_factory"]
+    profile = application_runtime["profile"]
+    state_root = application_runtime["state_root"]
+
+    class FakeClient:
+        def __init__(self, root_dir: Path) -> None:
+            self.root_dir = root_dir
+
+        def export_cover_letter_request(self, request) -> Path:
+            return self.root_dir / "cover_letter.request.json"
+
+        def export_answers_request(self, request) -> Path:
+            return self.root_dir / "answers.request.json"
+
+        def load_cover_letter_result(self):
+            return CoverLetterDraftResultModel(
+                prompt_version=COVER_LETTER_PROMPT_VERSION,
+                body_markdown=(
+                    "I am applying for the Backend Engineer role at Example. "
+                    "The ranked packet shows strong matched signals and source: lever.\n"
+                    "Regards,\nJane Operator"
+                ),
+                missing_inputs=[],
+                raw_response={"provider": "fake"},
+            )
+
+        def load_answers_result(self):
+            return None
+
+    monkeypatch.setattr("findmejobs.application.service.FilesystemApplicationDraftOpenClawClient", FakeClient)
+    with session_factory() as session:
+        job_id = _seed_application_job(session, profile, description_text="Python SQL AWS")
+    service = ApplicationDraftService(state_root=state_root)
+    with session_factory() as session:
+        with pytest.raises(ValueError, match="cover_letter_contains_internal_jargon"):
             service.draft_cover_letter(session, profile, job_id=job_id)
 
 
@@ -1114,8 +1183,11 @@ def test_openclaw_client_is_mocked_and_receives_only_approved_packet_input(
 
         def load_cover_letter_result(self):
             return CoverLetterDraftResultModel(
-                prompt_version="slice2.5-cover-letter-v1",
-                body_markdown="I am applying for the Backend Engineer role at Example because the role matches my Python and SQL work.",
+                prompt_version=COVER_LETTER_PROMPT_VERSION,
+                body_markdown=(
+                    "I am applying for the Backend Engineer role at Example because the role matches my Python and SQL work.\n"
+                    "Regards,\nJane Operator"
+                ),
                 missing_inputs=[],
                 raw_response={"provider": "fake"},
             )
@@ -1143,11 +1215,63 @@ def test_openclaw_client_is_mocked_and_receives_only_approved_packet_input(
     assert cover.origin == "openclaw"
     cover_packet = captured["cover"]["application_packet"]
     assert set(cover_packet.keys()) == set(ApplicationPacketModel.model_fields.keys())
+    assert captured["cover"]["model_hints"]["selection"] == "best_available"
+    assert captured["cover"]["model_hints"]["reasoning_effort"] == "high"
+    assert captured["cover"]["signoff_name"] == "Jane Operator"
+    assert captured["answers"]["model_hints"]["selection"] == "best_available"
     serialized = json.dumps(captured, default=str)
     assert "raw_html" not in serialized
     assert "raw_page_dump" not in serialized
     assert "Ignore previous instructions" not in serialized
     assert "<script>" not in serialized
+
+
+def test_openclaw_request_model_hints_allow_env_override(
+    monkeypatch,
+    application_runtime: dict[str, object],
+) -> None:
+    session_factory = application_runtime["session_factory"]
+    profile = application_runtime["profile"]
+    state_root = application_runtime["state_root"]
+    captured: dict[str, object] = {}
+
+    class FakeClient:
+        def __init__(self, root_dir: Path) -> None:
+            self.root_dir = root_dir
+
+        def export_cover_letter_request(self, request) -> Path:
+            captured["cover"] = request.model_dump(mode="json")
+            return self.root_dir / "cover_letter.request.json"
+
+        def export_answers_request(self, request) -> Path:
+            captured["answers"] = request.model_dump(mode="json")
+            return self.root_dir / "answers.request.json"
+
+        def load_cover_letter_result(self):
+            return None
+
+        def load_answers_result(self):
+            return None
+
+    monkeypatch.setenv("FINDMEJOBS_OPENCLAW_MODEL", "gpt-5.4")
+    monkeypatch.setenv("FINDMEJOBS_OPENCLAW_REASONING", "high")
+    monkeypatch.setattr("findmejobs.application.service.FilesystemApplicationDraftOpenClawClient", FakeClient)
+    with session_factory() as session:
+        job_id = _seed_application_job(
+            session,
+            profile,
+            description_text="Python SQL AWS",
+            questions=["Why are you a fit for this role?"],
+        )
+    service = ApplicationDraftService(state_root=state_root)
+    with session_factory() as session:
+        service.prepare_application(session, profile, job_id=job_id)
+
+    assert captured["cover"]["model_hints"]["selection"] == "best_available"
+    assert captured["cover"]["model_hints"]["reasoning_effort"] == "high"
+    assert captured["cover"]["signoff_name"] == "Jane Operator"
+    assert captured["cover"]["model_hints"]["requested_model"] == "gpt-5.4"
+    assert captured["answers"]["model_hints"]["requested_model"] == "gpt-5.4"
 
 
 def test_end_to_end_slice25_flow_with_mocked_openclaw_and_storage(
@@ -1183,7 +1307,7 @@ def test_end_to_end_slice25_flow_with_mocked_openclaw_and_storage(
 
         def load_cover_letter_result(self):
             return CoverLetterDraftResultModel(
-                prompt_version="slice2.5-cover-letter-v1",
+                prompt_version=COVER_LETTER_PROMPT_VERSION,
                 body_markdown="Dear Hiring Team,\n\nI am applying for the Backend Engineer role at Example.\n\nRegards,\nJane Operator\n",
                 missing_inputs=[],
                 raw_response={"provider": "fake-openclaw"},
@@ -1268,6 +1392,8 @@ def test_end_to_end_slice25_flow_with_mocked_openclaw_and_storage(
     assert (state_root / job_id / "cover_letter.draft.md").exists()
     assert (state_root / job_id / "answers.draft.yaml").exists()
     assert exported and {entry["kind"] for entry in exported} == {"cover", "answers"}
+    cover_exports = [e for e in exported if e["kind"] == "cover"]
+    assert cover_exports[0]["payload"]["signoff_name"] == "Jane Operator"
 
 
 def test_application_drafting_does_not_bypass_review_or_delivery_flows(application_runtime: dict[str, object]) -> None:

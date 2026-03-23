@@ -1,0 +1,20 @@
+# Optional `application` block for richer cover-letter packets (copy fields into operator `config/profile.yaml`).
+version: bootstrap-v1
+full_name: Example Operator
+email: operator@example.com
+target_titles:
+  - Software Engineer
+required_skills:
+  - Python
+years_experience: 9
+summary: Software engineer with 9 years building production systems.
+application:
+  professional_summary: Concise summary aligned to target roles (9 years in production delivery).
+  key_achievements:
+  - First concrete, resume-backed outcome with measurable or specific detail.
+  - Second outcome tied to stack or scale.
+  - Third outcome showing ownership or cross-functional work.
+  project_highlights:
+  - Role or project one with tech stack and scope in one sentence.
+  - Role or project two with customer or reliability angle.
+  - Role or project three with modernization or platform angle.

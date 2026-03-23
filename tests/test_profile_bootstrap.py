@@ -109,16 +109,16 @@ def test_txt_and_markdown_extraction_work(fixtures_dir: Path) -> None:
     assert "Backend Engineer" in md
 
 
-def test_baseline_recent_roles_keeps_privv_after_summary_years_of_experience() -> None:
-    """Regression: 'years of experience' must not poison company capture for EXPERIENCE PRIVV — Title."""
+def test_baseline_recent_roles_keeps_company_after_summary_years_of_experience() -> None:
+    """Regression: 'years of experience' must not poison company capture for EXPERIENCE EXAMPLE LABS — Title."""
     resume = (
         "JANE DOE SUMMARY Senior Engineer with 10 years of experience and strong depth. "
         "CORE SKILLS Python AWS. "
-        "EXPERIENCE PRIVV — Senior Software Engineer (Full-time) "
-        "DataGPT AI — Software Engineer (Part-time)"
+        "EXPERIENCE EXAMPLE LABS — Senior Software Engineer (Full-time) "
+        "SAMPLE SYSTEMS — Software Engineer (Part-time)"
     )
     extraction = build_baseline_extraction("fixture-import", resume)
-    assert "PRIVV" in extraction.recent_companies
+    assert "EXAMPLE LABS" in extraction.recent_companies
     assert any("Senior Software Engineer" in t for t in extraction.recent_titles)
 
 

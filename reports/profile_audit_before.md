@@ -11,15 +11,15 @@
 {
   "version": "bootstrap-v1",
   "rank_model_version": "bootstrap-v1",
-  "full_name": "Jariel Balberona",
+  "full_name": "Example Operator",
   "headline": "Senior Fullstack Engineer",
-  "email": "jarielbalb@gmail.com",
-  "phone": "+63 917 657 0260",
-  "location_text": "Philippines (Remote)",
-  "github_url": "https://github.com/jarielbalberona",
-  "linkedin_url": "https://linkedin.com/in/jarielbalberona",
-  "years_experience": 10,
-  "summary": "Senior Fullstack Engineer with 10 years of experience and strong depth in system architecture and DevOps.",
+  "email": "operator@example.com",
+  "phone": "+63 900 000 0000",
+  "location_text": "Remote",
+  "github_url": "https://github.com/example",
+  "linkedin_url": "https://linkedin.com/in/example",
+  "years_experience": 9,
+  "summary": "Senior Fullstack Engineer with 9 years of experience building production web systems.",
   "strengths": [
     "System Architecture",
     "Cloud + DevOps",
@@ -29,14 +29,16 @@
     "PostgreSQL"
   ],
   "recent_titles": [
+    "Senior Software Engineer",
     "Software Engineer",
     "Web Software Developer",
     "Fullstack JavaScript Developer"
   ],
   "recent_companies": [
-    "DataGPT AI",
-    "Arcanys",
-    "IdeaRobin"
+    "Example Labs",
+    "Sample Systems",
+    "Acme Digital",
+    "Demo Works"
   ],
   "target_titles": [
     "Senior Fullstack Engineer",
@@ -104,9 +106,17 @@
     }
   },
   "application": {
-    "professional_summary": "Senior Fullstack Engineer with 10 years of experience and strong depth in system architecture and DevOps.",
-    "key_achievements": [],
-    "project_highlights": [],
+    "professional_summary": "Senior Fullstack Engineer with 9 years building and modernizing production web systems across React, TypeScript, Node.js, PostgreSQL, AWS, and Terraform.",
+    "key_achievements": [
+      "Led a frontend migration to modern tooling, reduced code complexity, and improved release confidence.",
+      "Shipped analytics and reliability improvements for long-running application workloads.",
+      "Owned CI/CD and infrastructure automation for a multi-tenant platform on cloud services."
+    ],
+    "project_highlights": [
+      "Modernized a legacy product frontend with modular architecture and stronger test coverage.",
+      "Delivered ordering, operations, and loyalty capabilities on a multi-tenant application stack.",
+      "Built workflow automation features for internal productivity use cases."
+    ],
     "salary_expectation": null,
     "notice_period": null,
     "current_availability": null,

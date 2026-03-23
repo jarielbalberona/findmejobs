@@ -11,15 +11,15 @@
 {
   "version": "bootstrap-v1",
   "rank_model_version": "bootstrap-v1",
-  "full_name": "Jariel Balberona",
+  "full_name": "Example Operator",
   "headline": "Senior Fullstack Engineer",
-  "email": "jarielbalb@gmail.com",
-  "phone": "+63 917 657 0260",
-  "location_text": "Philippines (Remote)",
-  "github_url": "https://github.com/jarielbalberona",
-  "linkedin_url": "https://linkedin.com/in/jarielbalberona",
+  "email": "operator@example.com",
+  "phone": "+63 900 000 0000",
+  "location_text": "Remote",
+  "github_url": "https://github.com/example",
+  "linkedin_url": "https://linkedin.com/in/example",
   "years_experience": 9,
-  "summary": "Senior Fullstack Engineer with 9 years of experience and strong depth in system architecture and DevOps.",
+  "summary": "Senior Fullstack Engineer with 9 years of experience building production web systems.",
   "strengths": [
     "System Architecture",
     "Cloud + DevOps",
@@ -35,11 +35,10 @@
     "Fullstack JavaScript Developer"
   ],
   "recent_companies": [
-    "PRIVV",
-    "DataGPT AI",
-    "Experience Digital",
-    "Arcanys",
-    "IdeaRobin"
+    "Example Labs",
+    "Sample Systems",
+    "Acme Digital",
+    "Demo Works"
   ],
   "target_titles": [
     "Senior Fullstack Engineer",
@@ -109,14 +108,14 @@
   "application": {
     "professional_summary": "Senior Fullstack Engineer with 9 years building and modernizing production web systems across React, TypeScript, Node.js, PostgreSQL, AWS, and Terraform.",
     "key_achievements": [
-      "Led a React 17 to 19 migration with Vite and Tailwind v4, splitting a legacy monolith into feature modules and cutting average file size by about 56%.",
-      "Shipped in-product analytics (heatmaps, treemaps, stacked bars) and reliability flows for long-running AI chat workloads at DataGPT AI.",
-      "Owned CI/CD and Terraform-based infrastructure for a multi-tenant cafe OS (Dumadine), pairing Dockerized releases with Grafana, Prometheus, and Loki."
+      "Led a frontend migration to modern tooling, reduced code complexity, and improved release confidence.",
+      "Shipped analytics and reliability improvements for long-running application workloads.",
+      "Owned CI/CD and infrastructure automation for a multi-tenant platform on cloud services."
     ],
     "project_highlights": [
-      "Privv (Senior Software Engineer) modernized a construction PM platform frontend with NestJS, TanStack Query, Zustand, Vitest, and a token-driven Tailwind design system.",
-      "Dumadine delivered QR ordering, kitchen display, inventory, and loyalty on a multi-tenant stack with WebSockets and idempotent order flows.",
-      "DataGPT AI built a node-based Agents V1 workflow UI (data source, prompt, condition, recipient) for automation experiments."
+      "Modernized a legacy product frontend with modular architecture and stronger test coverage.",
+      "Delivered ordering, operations, and loyalty capabilities on a multi-tenant application stack.",
+      "Built workflow automation features for internal productivity use cases."
     ],
     "salary_expectation": null,
     "notice_period": null,

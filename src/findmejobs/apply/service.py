@@ -511,11 +511,13 @@ class ApplySessionService:
         unresolved_fields: list[ApplyUnresolvedField],
         approvals_required: list[ApplyApprovalGate],
     ) -> dict[str, object]:
+        status_flags = self._status_flags(session_model.status, approvals_required, session_model.submit_available)
         return {
             "job_id": session_model.job_id,
             "company_name": packet.company_name,
             "role_title": packet.role_title,
             "status": session_model.status,
+            "status_flags": status_flags,
             "mode": session_model.mode,
             "apply_url": session_model.apply_url,
             "unresolved_fields": len(unresolved_fields),
@@ -640,6 +642,7 @@ class ApplySessionService:
         summary.update(
             {
                 "status": updated_session.status,
+                "status_flags": self._status_flags(updated_session.status, approvals_required, updated_session.submit_available),
                 "current_step": updated_session.current_step,
                 "updated_at": updated_session.updated_at.isoformat(),
                 "unresolved_fields": len(unresolved_fields),
@@ -701,13 +704,29 @@ class ApplySessionService:
         return sorted(merged.values(), key=lambda item: item.action_id)
 
     def _derive_status(self, mode: str, result: ApplyBrowserResult, approvals_required: list[ApplyApprovalGate]) -> str:
-        if any(item.status == "pending" for item in approvals_required):
+        pending_approvals = any(item.status == "pending" for item in approvals_required if item.gate_type != "final_submit")
+        if pending_approvals:
             return "awaiting_approval"
         if result.submit_available:
             return "awaiting_manual_submit"
         if result.safe_to_continue:
             return "ready_to_resume"
         return "ready_to_resume" if mode == "guided" else "in_progress"
+
+    def _status_flags(
+        self,
+        status: str,
+        approvals_required: list[ApplyApprovalGate],
+        submit_available: bool,
+    ) -> dict[str, bool]:
+        awaiting_approval = any(item.status == "pending" for item in approvals_required if item.gate_type != "final_submit")
+        awaiting_manual_submit = submit_available and not awaiting_approval
+        ready_to_resume = status == "ready_to_resume"
+        return {
+            "awaiting_approval": awaiting_approval,
+            "awaiting_manual_submit": awaiting_manual_submit,
+            "ready_to_resume": ready_to_resume,
+        }
 
     def _render_report_markdown(
         self,
@@ -718,12 +737,18 @@ class ApplySessionService:
         approvals_required: list[ApplyApprovalGate],
         filled_fields: list[ApplyFieldAction],
     ) -> str:
+        status_flags = self._status_flags(session_model.status, approvals_required, session_model.submit_available)
+        pending_approvals = [item for item in approvals_required if item.status == "pending" and item.gate_type != "final_submit"]
         lines = [
             f"# Apply session for {summary.get('company_name', 'Unknown company')} / {summary.get('role_title', 'Unknown role')}",
             "",
             f"- job_id: {session_model.job_id}",
             f"- mode: {session_model.mode}",
             f"- status: {session_model.status}",
+            f"- awaiting_approval: {'yes' if status_flags['awaiting_approval'] else 'no'}",
+            f"- awaiting_manual_submit: {'yes' if status_flags['awaiting_manual_submit'] else 'no'}",
+            f"- ready_to_resume: {'yes' if status_flags['ready_to_resume'] else 'no'}",
+            f"- pending_approval_count: {len(pending_approvals)}",
             f"- apply_url: {session_model.apply_url}",
             f"- current_step: {session_model.current_step or 'not_started'}",
             f"- current_page_url: {session_model.current_page_url or 'n/a'}",

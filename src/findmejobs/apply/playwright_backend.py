@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 import platform
 import plistlib
 import re
 import shutil
+import socket
 import subprocess
+import tempfile
+import time
+from urllib.request import urlopen
 
 from findmejobs.apply.browser import BrowserBackend, BrowserField, BrowserStepSnapshot
 
@@ -24,6 +29,9 @@ class PlaywrightBrowserBackend(BrowserBackend):
         self._browser = None
         self._context = None
         self._page = None
+        self._detached_browser = False
+        self._detached_process = None
+        self._user_data_dir: Path | None = None
 
     def open(
         self,
@@ -32,6 +40,7 @@ class PlaywrightBrowserBackend(BrowserBackend):
         browser_profile: str | None = None,
         browser_profile_dir: Path | None = None,
         browser_executable_path: Path | None = None,
+        keep_open_on_exit: bool = False,
     ) -> BrowserStepSnapshot:
         try:
             from playwright.sync_api import sync_playwright
@@ -39,18 +48,21 @@ class PlaywrightBrowserBackend(BrowserBackend):
             raise RuntimeError("playwright_not_installed: install with pip install -e '.[browser]' and playwright install chromium") from exc
         self._playwright = sync_playwright().start()
         chromium = self._playwright.chromium
-        choice = resolve_browser_launch_choice(browser_executable_path)
-        launch_kwargs = {"headless": False}
-        if choice.executable_path is not None:
-            launch_kwargs["executable_path"] = str(choice.executable_path)
-        if browser_profile_dir is not None:
-            self._context = chromium.launch_persistent_context(str(browser_profile_dir), **launch_kwargs)
-            self._page = self._context.pages[0] if self._context.pages else self._context.new_page()
+        if keep_open_on_exit:
+            self._open_detached(url=url, browser_profile_dir=browser_profile_dir, browser_executable_path=browser_executable_path)
         else:
-            self._browser = chromium.launch(**launch_kwargs)
-            self._context = self._browser.new_context()
-            self._page = self._context.new_page()
-        self._page.goto(url, wait_until="domcontentloaded")
+            choice = resolve_browser_launch_choice(browser_executable_path)
+            launch_kwargs = {"headless": False}
+            if choice.executable_path is not None:
+                launch_kwargs["executable_path"] = str(choice.executable_path)
+            if browser_profile_dir is not None:
+                self._context = chromium.launch_persistent_context(str(browser_profile_dir), **launch_kwargs)
+                self._page = self._context.pages[0] if self._context.pages else self._context.new_page()
+            else:
+                self._browser = chromium.launch(**launch_kwargs)
+                self._context = self._browser.new_context()
+                self._page = self._context.new_page()
+            self._page.goto(url, wait_until="domcontentloaded")
         return self._snapshot("open", browser_profile)
 
     def fill(self, field: BrowserField, value: str) -> None:
@@ -69,6 +81,12 @@ class PlaywrightBrowserBackend(BrowserBackend):
 
     def close(self, *, keep_open: bool = False) -> None:
         if keep_open:
+            self._page = None
+            self._context = None
+            self._browser = None
+            if self._playwright is not None:
+                self._playwright.stop()
+                self._playwright = None
             return
         if self._context is not None:
             self._context.close()
@@ -76,6 +94,53 @@ class PlaywrightBrowserBackend(BrowserBackend):
             self._browser.close()
         if self._playwright is not None:
             self._playwright.stop()
+        self._page = None
+        self._context = None
+        self._browser = None
+        self._playwright = None
+
+    def _open_detached(
+        self,
+        *,
+        url: str,
+        browser_profile_dir: Path | None,
+        browser_executable_path: Path | None,
+    ) -> None:
+        chromium = self._playwright.chromium
+        executable_path = browser_executable_path or Path(chromium.executable_path)
+        if not executable_path.exists():
+            raise RuntimeError(f"browser_executable_not_found:{executable_path}")
+        profile_dir = browser_profile_dir or Path(tempfile.mkdtemp(prefix="findmejobs-apply-browser-"))
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        port = _reserve_local_port()
+        launch_args = [
+            str(executable_path),
+            f"--remote-debugging-port={port}",
+            f"--user-data-dir={profile_dir}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            url,
+        ]
+        popen_kwargs = {
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+            "stdin": subprocess.DEVNULL,
+            "close_fds": True,
+        }
+        if platform.system() == "Windows":
+            popen_kwargs["creationflags"] = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        else:
+            popen_kwargs["start_new_session"] = True
+        self._detached_process = subprocess.Popen(launch_args, **popen_kwargs)
+        self._detached_browser = True
+        self._user_data_dir = profile_dir
+        endpoint = _wait_for_cdp_endpoint(port)
+        self._browser = chromium.connect_over_cdp(endpoint)
+        if self._browser.contexts:
+            self._context = self._browser.contexts[0]
+        else:
+            raise RuntimeError("browser_context_not_available")
+        self._page = _wait_for_browser_page(self._context, url)
 
     def _snapshot(self, step_prefix: str, label: str | None) -> BrowserStepSnapshot:
         fields = []
@@ -231,3 +296,41 @@ def _find_linux_desktop_file(desktop_file_name: str) -> Path | None:
         if candidate.exists():
             return candidate
     return None
+
+
+def _reserve_local_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(1)
+        return int(sock.getsockname()[1])
+
+
+def _wait_for_cdp_endpoint(port: int, timeout_seconds: float = 10.0) -> str:
+    deadline = time.monotonic() + timeout_seconds
+    last_error: Exception | None = None
+    while time.monotonic() < deadline:
+        try:
+            with urlopen(f"http://127.0.0.1:{port}/json/version", timeout=0.5) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            web_socket_url = payload.get("webSocketDebuggerUrl")
+            if isinstance(web_socket_url, str) and web_socket_url.strip():
+                return f"http://127.0.0.1:{port}"
+        except Exception as exc:  # pragma: no cover - platform/socket timing
+            last_error = exc
+            time.sleep(0.1)
+    detail = f":{last_error}" if last_error is not None else ""
+    raise RuntimeError(f"browser_cdp_not_ready:{port}{detail}")
+
+
+def _wait_for_browser_page(context, target_url: str, timeout_seconds: float = 10.0):
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        for page in context.pages:
+            current_url = page.url or ""
+            if current_url and current_url != "about:blank":
+                return page
+        time.sleep(0.1)
+    page = context.pages[0] if context.pages else context.new_page()
+    if not (page.url or "").strip() or page.url == "about:blank":
+        page.goto(target_url, wait_until="domcontentloaded")
+    return page

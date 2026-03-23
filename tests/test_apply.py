@@ -247,6 +247,7 @@ class _FakeBrowserBackend:
         self.executable_paths: list[str | None] = []
         self.next_clicks: list[str | None] = []
         self.closed = False
+        self.keep_open_requests: list[bool] = []
 
     def open(
         self,
@@ -255,11 +256,13 @@ class _FakeBrowserBackend:
         browser_profile: str | None = None,
         browser_profile_dir: Path | None = None,
         browser_executable_path: Path | None = None,
+        keep_open_on_exit: bool = False,
     ) -> BrowserStepSnapshot:
         _ = browser_profile
         _ = browser_profile_dir
         self.opened.append(url)
         self.executable_paths.append(str(browser_executable_path) if browser_executable_path is not None else None)
+        self.keep_open_requests.append(keep_open_on_exit)
         return self.snapshots[self.index]
 
     def fill(self, field: BrowserField, value: str) -> None:
@@ -1243,6 +1246,34 @@ def test_browser_runner_can_close_browser_when_requested(apply_runtime: dict[str
     )
     ApplyBrowserRunner(backend).run(request, leave_open_for_review=False)
     assert backend.closed is True
+    assert backend.keep_open_requests == [False]
+
+
+def test_browser_runner_requests_detached_browser_when_left_open(apply_runtime: dict[str, object]) -> None:
+    with apply_runtime["session_factory"]() as session:
+        job_id = _seed_apply_job(session, apply_runtime["profile"], seed_key="runner-leave-open")
+    service = ApplySessionService(
+        application_state_root=apply_runtime["application_state_root"],
+        apply_state_root=apply_runtime["apply_state_root"],
+    )
+    _prepare_application(service, apply_runtime, job_id=job_id)
+    with apply_runtime["session_factory"]() as session:
+        service.open_session(session, apply_runtime["profile"], job_id=job_id, mode="guided")
+    request = FilesystemApplyOpenClawClient(apply_runtime["apply_state_root"] / job_id / "openclaw").load_browser_request()
+    backend = _FakeBrowserBackend(
+        [
+            BrowserStepSnapshot(
+                step_id="leave-open-step",
+                step_label="Leave open test",
+                page_url=request.apply_url,
+                parse_confidence=0.95,
+                fields=[BrowserField(field_id="email", label="Email", field_type="email")],
+            )
+        ]
+    )
+    ApplyBrowserRunner(backend).run(request, leave_open_for_review=True)
+    assert backend.closed is False
+    assert backend.keep_open_requests == [True]
 
 
 def test_browser_runner_passes_browser_executable_path_to_backend(apply_runtime: dict[str, object], tmp_path: Path) -> None:
@@ -1435,6 +1466,33 @@ def test_browser_runner_does_not_map_portfolio_to_github_field(apply_runtime: di
     assert backend.fills == []
     assert any(item.reason_code == "missing_portfolio_url" for item in result.unresolved_fields)
     assert all(action.field_key != "github_url" for action in result.filled_fields)
+
+
+def test_browser_runner_does_not_map_github_field_to_portfolio(apply_runtime: dict[str, object]) -> None:
+    with apply_runtime["session_factory"]() as session:
+        job_id = _seed_apply_job(session, apply_runtime["profile"], seed_key="runner-github")
+    service = ApplySessionService(
+        application_state_root=apply_runtime["application_state_root"],
+        apply_state_root=apply_runtime["apply_state_root"],
+    )
+    _prepare_application(service, apply_runtime, job_id=job_id)
+    with apply_runtime["session_factory"]() as session:
+        service.open_session(session, apply_runtime["profile"], job_id=job_id, mode="assisted")
+    request = FilesystemApplyOpenClawClient(apply_runtime["apply_state_root"] / job_id / "openclaw").load_browser_request()
+    backend = _FakeBrowserBackend(
+        [
+            BrowserStepSnapshot(
+                step_id="github-step",
+                step_label="Links",
+                page_url=request.apply_url,
+                parse_confidence=0.94,
+                fields=[BrowserField(field_id="github_profile", label="GitHub Profile", field_type="url")],
+            )
+        ]
+    )
+    result = ApplyBrowserRunner(backend).run(request)
+    assert backend.fills == [("github_profile", "https://github.example.test/jane")]
+    assert all(action.field_key != "portfolio_url" for action in result.filled_fields)
 
 
 def test_browser_runner_uploads_validated_resume_and_never_clicks_submit(apply_runtime: dict[str, object]) -> None:
@@ -1715,3 +1773,8 @@ def test_manual_submit_does_not_override_pending_approvals_in_status(apply_runti
     assert status.session.status == "awaiting_approval"
     assert status.session.submit_available is True
     assert any(gate.action_id == "final-submit-manual" for gate in status.approvals_required)
+    report = service.render_report(job_id=job_id)
+    assert "- awaiting_approval: yes" in report
+    assert "- awaiting_manual_submit: no" in report
+    assert "- ready_to_resume: no" in report
+    assert "- pending_approval_count: 1" in report

@@ -43,6 +43,7 @@ class BrowserBackend(Protocol):
         browser_profile: str | None = None,
         browser_profile_dir: Path | None = None,
         browser_executable_path: Path | None = None,
+        keep_open_on_exit: bool = False,
     ) -> BrowserStepSnapshot: ...
     def fill(self, field: BrowserField, value: str) -> None: ...
     def upload(self, field: BrowserField, file_path: Path) -> None: ...
@@ -90,6 +91,7 @@ class ApplyBrowserRunner:
             browser_profile=request.browser_profile,
             browser_profile_dir=browser_profile_dir,
             browser_executable_path=browser_executable_path,
+            keep_open_on_exit=leave_open_for_review,
         )
         try:
             while True:

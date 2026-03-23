@@ -13,6 +13,8 @@ from findmejobs.utils.urls import canonicalize_url
 
 
 class DirectPageAdapter(SourceAdapter):
+    transport_kind = "html_scrape"
+
     def build_url(self, config: SourceConfig) -> str:
         validate_config_type(config, DirectPageSourceConfig)
         return str(config.page_url)

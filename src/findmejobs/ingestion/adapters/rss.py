@@ -9,6 +9,8 @@ from findmejobs.utils.hashing import sha256_hexdigest
 
 
 class RSSAdapter(SourceAdapter):
+    transport_kind = "feed_xml"
+
     def build_url(self, config: SourceConfig) -> str:
         validate_config_type(config, RSSSourceConfig)
         return str(config.feed_url)

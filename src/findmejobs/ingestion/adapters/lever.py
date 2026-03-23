@@ -31,6 +31,7 @@ class LeverAdapter(SourceAdapter):
                     source_job_key=str(posting_id),
                     source_url=source_url,
                     apply_url=job.get("applyUrl") or source_url,
+                    source_company_id=config.site,
                     title=title,
                     company=_company_name(job, config.company_name),
                     location_text=str(categories.get("location", "")).strip(),

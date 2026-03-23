@@ -1,9 +1,0 @@
-# Ashby: use the public job-board JSON URL (not the HTML careers page).
-# Board slug = last path segment of https://jobs.ashbyhq.com/<slug>
-name = "Ashby"
-kind = "ashby"
-enabled = true
-priority = 20
-trust_weight = 1.1
-company_name = "Ashby"
-board_url = "https://api.ashbyhq.com/posting-api/job-board/Ashby"

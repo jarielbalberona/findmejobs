@@ -1,8 +1,0 @@
-name = "figma-greenhouse"
-kind = "greenhouse"
-enabled = false
-priority = 20
-trust_weight = 1.1
-company_name = "Figma"
-board_token = "figma"
-include_content = true

@@ -1,6 +1,0 @@
-name = "jobicy-ph-engineering-rss"
-kind = "rss"
-enabled = false
-priority = 8
-trust_weight = 0.8
-feed_url = "https://jobicy.com/feed/job_feed?job_categories=engineering&job_types=full-time&search_region=philippines"

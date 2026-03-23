@@ -33,6 +33,7 @@ class JobviteAdapter(SourceAdapter):
                     source_job_key=job_id,
                     source_url=source_url,
                     apply_url=str(job.get("applyUrl") or "").strip() or source_url,
+                    source_company_id=config.company_code,
                     title=title,
                     company=_company_name(job, config.company_name),
                     location_text=_location_text(job),

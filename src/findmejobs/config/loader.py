@@ -4,8 +4,6 @@ import tomllib
 from pathlib import Path
 from typing import Iterable
 
-from pydantic import TypeAdapter
-
 from findmejobs.config.models import AppConfig, ApplicationProfile, ProfileConfig, RankingPolicy, SourceConfig, SourcesFileConfig
 from findmejobs.profile_bootstrap.models import ProfileConfigDraft, RankingConfigDraft
 from findmejobs.utils.yamlio import load_yaml
@@ -28,7 +26,6 @@ def load_profile_config(path: Path) -> ProfileConfig:
 
 
 def load_source_configs(path: Path) -> list[SourceConfig]:
-    # Canonical source config path (v1): config/sources.yaml.
     if path.suffix.casefold() in {".yaml", ".yml"}:
         if not path.exists():
             return []
@@ -36,17 +33,9 @@ def load_source_configs(path: Path) -> list[SourceConfig]:
         config = SourcesFileConfig.model_validate(raw or {})
         return config.sources
 
-    # Backward-compatibility for legacy sources.d/*.toml during transition.
-    if path.is_dir():
-        adapter = TypeAdapter(SourceConfig)
-        sources: list[SourceConfig] = []
-        for item in sorted(path.glob("*.toml")):
-            sources.append(adapter.validate_python(_read_toml(item)))
-        return sources
-
     if not path.exists():
         return []
-    raise ValueError(f"unsupported source config path: {path}")
+    raise ValueError(f"unsupported source config path (expected YAML file): {path}")
 
 
 def ensure_directories(paths: Iterable[Path]) -> None:

@@ -32,6 +32,7 @@ class WorkableAdapter(SourceAdapter):
                     source_job_key=str(shortcode),
                     source_url=source_url,
                     apply_url=job.get("application_url") or source_url,
+                    source_company_id=config.account_subdomain,
                     title=title,
                     company=_company_name(payload, job, config.company_name),
                     location_text=_location_text(job),

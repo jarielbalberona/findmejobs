@@ -36,7 +36,17 @@ COUNTRY_HINTS = {
 }
 
 
-def normalize_job(source_job_id: str, source_id: str, seen_at, record: SourceJobRecord) -> CanonicalJob:
+def normalize_job(
+    source_job_id: str,
+    source_id: str,
+    seen_at,
+    record: SourceJobRecord,
+    *,
+    source_name: str | None = None,
+    source_kind: str | None = None,
+    source_priority: int = 0,
+    source_trust_weight: float = 1.0,
+) -> CanonicalJob:
     errors: list[str] = []
     canonical_url = canonicalize_url(record.apply_url or record.source_url)
     if canonical_url is None:
@@ -56,7 +66,14 @@ def normalize_job(source_job_id: str, source_id: str, seen_at, record: SourceJob
         source_job_id=source_job_id,
         source_id=source_id,
         source_job_key=record.source_job_key,
+        source_name=source_name,
+        source_kind=source_kind,
+        source_trust_weight=source_trust_weight,
+        source_priority=source_priority,
+        source_company_id=record.source_company_id,
         canonical_url=canonical_url,
+        job_url=record.source_url,
+        apply_url=record.apply_url,
         company_name=company,
         title=title,
         location_text=location_text,

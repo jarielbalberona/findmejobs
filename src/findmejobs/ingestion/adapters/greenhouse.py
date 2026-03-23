@@ -29,6 +29,7 @@ class GreenhouseAdapter(SourceAdapter):
                     source_job_key=str(job_id),
                     source_url=absolute_url,
                     apply_url=absolute_url,
+                    source_company_id=config.board_token,
                     title=title,
                     company=_company_name(job, config.company_name),
                     location_text=(job.get("location") or {}).get("name", ""),

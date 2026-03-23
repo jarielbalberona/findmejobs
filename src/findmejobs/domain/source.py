@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, HttpUrl
 
@@ -9,6 +9,7 @@ PREDICTABLE_ATS_KINDS = frozenset({"greenhouse", "lever", "ashby", "smartrecruit
 PH_BOARD_KINDS = frozenset({"jobstreet_ph", "kalibrr", "bossjob_ph", "foundit_ph"})
 DIRECT_PAGE_KINDS = frozenset({"direct_page"})
 DISCOVERY_KINDS = frozenset({"rss"})
+TransportKind = Literal["api_json", "feed_xml", "html_scrape"]
 
 
 class FetchArtifact(BaseModel):
@@ -27,6 +28,7 @@ class SourceJobRecord(BaseModel):
     source_job_key: str
     source_url: str
     apply_url: str | None = None
+    source_company_id: str | None = None
     title: str
     company: str
     location_text: str = ""
@@ -49,3 +51,13 @@ def source_family_for_kind(kind: str) -> str:
     if kind in DISCOVERY_KINDS:
         return "feed"
     return "unknown"
+
+
+def transport_for_kind(kind: str) -> TransportKind:
+    if kind in PREDICTABLE_ATS_KINDS or kind in PH_BOARD_KINDS:
+        return "api_json"
+    if kind in DIRECT_PAGE_KINDS:
+        return "html_scrape"
+    if kind in DISCOVERY_KINDS:
+        return "feed_xml"
+    return "api_json"

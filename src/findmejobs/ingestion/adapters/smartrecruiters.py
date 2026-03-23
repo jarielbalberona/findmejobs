@@ -35,6 +35,7 @@ class SmartRecruitersAdapter(SourceAdapter):
                     source_job_key=str(job_id),
                     source_url=source_url,
                     apply_url=posting.get("applyUrl") or source_url,
+                    source_company_id=config.company_identifier,
                     title=title,
                     company=_company_name(posting, config.company_name),
                     location_text=location_text,

@@ -87,12 +87,14 @@ def run_ingest(
             session.commit()
             adapter = adapter_builder(source_config)
             try:
-                artifact = fetcher(
+                artifact = _fetch_artifact(
+                    fetcher,
                     client,
                     adapter.build_url(source_config),
                     app_config,
                     app_config.storage.raw_dir,
                     source.name,
+                    headers=adapter.build_headers(source_config),
                 )
                 raw_document = get_or_create_raw_document(session, source.id, fetch_run.id, artifact, id_factory)
                 session.commit()
@@ -111,7 +113,16 @@ def run_ingest(
                     if _blocked_by_source_config(record, source_config):
                         continue
                     source_job, created_source_job = upsert_source_job(session, source.id, raw_document.id, fetch_run.id, record, id_factory)
-                    canonical = normalize_job(source_job.id, source.id, source_job.seen_at, record)
+                    canonical = normalize_job(
+                        source_job.id,
+                        source.id,
+                        source_job.seen_at,
+                        record,
+                        source_name=source.name,
+                        source_kind=source.kind,
+                        source_priority=source.priority,
+                        source_trust_weight=source.trust_weight,
+                    )
                     normalized, created_normalized = upsert_normalized_job(session, canonical, id_factory)
                     _cluster, merged = assign_job_cluster(session, normalized, id_factory)
                     counts["records"] += 1
@@ -207,3 +218,12 @@ def build_adapter(config: SourceConfig):
 def _blocked_by_source_config(record, source_config: SourceConfig) -> bool:
     title_lower = record.title.casefold()
     return any(keyword.casefold() in title_lower for keyword in source_config.blocked_title_keywords)
+
+
+def _fetch_artifact(fetcher, client, url: str, app_config: AppConfig, raw_dir, source_name: str, *, headers: dict[str, str]):
+    try:
+        return fetcher(client, url, app_config, raw_dir, source_name, headers=headers)
+    except TypeError as exc:
+        if "headers" not in str(exc):
+            raise
+        return fetcher(client, url, app_config, raw_dir, source_name)

@@ -35,8 +35,13 @@ def build_retryable_get(max_attempts: int):
         retry=retry_if_exception_type((httpx.TimeoutException, httpx.TransportError, FetchError)),
         reraise=True,
     )
-    def _runner(client: httpx.Client, url: str) -> httpx.Response:
-        response = client.get(url, follow_redirects=True)
+    def _runner(client: httpx.Client, url: str, headers: dict[str, str] | None = None) -> httpx.Response:
+        try:
+            response = client.get(url, follow_redirects=True, headers=headers)
+        except TypeError as exc:
+            if "headers" not in str(exc):
+                raise
+            response = client.get(url, follow_redirects=True)
         if response.status_code >= 500:
             raise FetchError(f"server returned {response.status_code}")
         response.raise_for_status()
@@ -45,8 +50,16 @@ def build_retryable_get(max_attempts: int):
     return _runner
 
 
-def fetch_to_artifact(client: httpx.Client, url: str, app_config: AppConfig, raw_root: Path, source_name: str) -> FetchArtifact:
-    response = build_retryable_get(app_config.http.max_attempts)(client, url)
+def fetch_to_artifact(
+    client: httpx.Client,
+    url: str,
+    app_config: AppConfig,
+    raw_root: Path,
+    source_name: str,
+    *,
+    headers: dict[str, str] | None = None,
+) -> FetchArtifact:
+    response = build_retryable_get(app_config.http.max_attempts)(client, url, headers=headers)
     body = response.content
     fetched_at = utcnow()
     sha = sha256_hexdigest(body)

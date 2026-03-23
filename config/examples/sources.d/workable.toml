@@ -1,8 +1,0 @@
-name = "example-workable"
-kind = "workable"
-enabled = false
-priority = 5
-trust_weight = 0.85
-account_subdomain = "your-subdomain"
-include_details = true
-company_name = "Your Company"

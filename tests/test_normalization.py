@@ -52,6 +52,7 @@ def test_rss_and_ats_records_map_to_canonical_job_model() -> None:
         source_job_key="101",
         source_url="https://boards.greenhouse.io/acme/jobs/101?gh_jid=101&utm_source=boards",
         apply_url="https://boards.greenhouse.io/acme/jobs/101?gh_jid=101&utm_source=boards",
+        source_company_id="acme",
         title="Backend Engineer",
         company="Acme",
         location_text="Remote, Philippines",
@@ -60,12 +61,26 @@ def test_rss_and_ats_records_map_to_canonical_job_model() -> None:
         raw_payload={},
     )
     rss_job = normalize_job("rss-job", "rss-source", seen_at, rss_record)
-    ats_job = normalize_job("ats-job", "ats-source", seen_at, ats_record)
+    ats_job = normalize_job(
+        "ats-job",
+        "ats-source",
+        seen_at,
+        ats_record,
+        source_name="acme-greenhouse",
+        source_kind="greenhouse",
+        source_priority=20,
+        source_trust_weight=1.1,
+    )
 
     assert rss_job.canonical_url == "https://example.test/jobs/1"
     assert ats_job.canonical_url == "https://boards.greenhouse.io/acme/jobs/101?gh_jid=101"
     assert rss_job.country_code == "PH"
     assert ats_job.location_type == "remote"
+    assert ats_job.source_name == "acme-greenhouse"
+    assert ats_job.source_kind == "greenhouse"
+    assert ats_job.source_company_id == "acme"
+    assert ats_job.job_url == ats_record.source_url
+    assert ats_job.apply_url == ats_record.apply_url
     assert "python" in ats_job.tags
 
 

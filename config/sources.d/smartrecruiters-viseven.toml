@@ -1,8 +1,0 @@
-name = "viseven-smartrecruiters"
-kind = "smartrecruiters"
-enabled = false
-priority = 18
-trust_weight = 1.0
-company_name = "Viseven"
-company_identifier = "viseven"
-limit = 100

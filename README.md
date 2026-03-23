@@ -122,11 +122,25 @@ Supported source kinds:
 - `ashby`
 - `smartrecruiters`
 - `workable`
+- `breezy_hr`
+- `jobvite`
 - `jobstreet_ph`
 - `kalibrr`
 - `bossjob_ph`
 - `foundit_ph`
 - `direct_page`
+
+ATS-backed structured public ingestion is the preferred default:
+
+- `greenhouse` via Greenhouse public boards API (`api_json`)
+- `lever` via Lever public postings API (`api_json`)
+- `ashby` via Ashby public posting API URL (`api_json`)
+- `smartrecruiters` via SmartRecruiters public postings API (`api_json`)
+- `workable` via Workable public account API (`api_json`)
+- `breezy_hr` via Breezy public JSON endpoint (`api_json`)
+- `jobvite` via Jobvite public jobs API (`api_json`)
+
+RSS is acceptable for discovery. `direct_page` is fallback-only. Broad hostile boards are intentionally not a primary ingestion strategy.
 
 Manage sources via CLI (not manual YAML surgery):
 
@@ -143,6 +157,16 @@ Source trust is intentionally tiered:
 - Tier A ATS adapters: higher default trust
 - Tier B PH board adapters: more brittle, test harder
 - Tier C direct-page parser: fallback only
+
+Intentionally not enabled as primary sources:
+
+- SEEK
+- Jora
+- Similar broad aggregators with brittle or blocked scraping surfaces
+
+Reason: they do not fit the repo's boring, structured-public, deterministic ingestion rule as cleanly as public ATS endpoints.
+
+Use `config/examples/sources.yaml` as the canonical starting point for ATS-first config. The templates are disabled by default and named so you can copy them per region or profile without changing the loader.
 
 ## Daily operator flow
 
@@ -200,6 +224,15 @@ findmejobs ranking set --minimum-score 40 --stale-days 45 --add-blocked-company 
 findmejobs profile set --add-target-title "Senior Backend Engineer"
 findmejobs digest send --dry-run
 findmejobs digest resend --digest-date 2026-03-19 --dry-run
+```
+
+ATS-first ingestion examples:
+
+```bash
+findmejobs sources add --json '{"name":"canary-greenhouse-au","kind":"greenhouse","board_token":"replace-me","company_name":"Replace Me AU","include_content":true}'
+findmejobs sources add --json '{"name":"canary-lever-au","kind":"lever","site":"replace-me","company_name":"Replace Me AU"}'
+findmejobs ingest --source greenhouse
+findmejobs ingest --source lever
 ```
 
 ## Local UI (read-only)

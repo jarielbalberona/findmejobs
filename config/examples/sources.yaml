@@ -1,2 +1,62 @@
 version: v1
-sources: []
+sources:
+  # ATS-first templates for structured public endpoints.
+  # Keep these disabled until you replace the tenant-specific identifiers.
+  # Transport is implicit by kind:
+  # - greenhouse / lever / ashby / smartrecruiters / workable = api_json
+  # - rss = feed_xml
+  # - direct_page = html_scrape fallback only
+
+  # Australia-oriented template naming. Duplicate or rename entries per profile/region.
+  - name: au-greenhouse-template
+    kind: greenhouse
+    enabled: false
+    priority: 20
+    trust_weight: 1.1
+    board_token: replace-me
+    company_name: Replace Me AU
+    include_content: true
+
+  - name: au-lever-template
+    kind: lever
+    enabled: false
+    priority: 20
+    trust_weight: 1.1
+    site: replace-me
+    company_name: Replace Me AU
+
+  - name: au-ashby-template
+    kind: ashby
+    enabled: false
+    priority: 20
+    trust_weight: 1.1
+    company_name: Replace Me AU
+    # Use the public Ashby posting API URL, not the HTML board page.
+    board_url: https://api.ashbyhq.com/posting-api/job-board/replace-me
+
+  - name: au-smartrecruiters-template
+    kind: smartrecruiters
+    enabled: false
+    priority: 20
+    trust_weight: 1.1
+    company_identifier: replace-me
+    company_name: Replace Me AU
+    limit: 100
+
+  - name: au-workable-template
+    kind: workable
+    enabled: false
+    priority: 20
+    trust_weight: 1.05
+    account_subdomain: replace-me
+    company_name: Replace Me AU
+    include_details: true
+
+  # RSS discovery is still valid, but it is not the preferred primary path when
+  # a company already exposes structured ATS job data.
+  - name: optional-rss-discovery
+    kind: rss
+    enabled: false
+    priority: 5
+    trust_weight: 0.9
+    feed_url: https://example.com/jobs.rss

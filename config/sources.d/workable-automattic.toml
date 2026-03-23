@@ -1,8 +1,0 @@
-name = "automattic-workable"
-kind = "workable"
-enabled = false
-priority = 18
-trust_weight = 1.0
-account_subdomain = "automattic"
-include_details = true
-company_name = "Automattic"

@@ -30,6 +30,10 @@ def find_cluster_for_job(session: Session, job: NormalizedJob) -> MatchResult:
     if cluster:
         return MatchResult(cluster, "normalized_identity", 0.9)
 
+    cluster = _cluster_by_description_signature(session, job)
+    if cluster:
+        return MatchResult(cluster, "description_signature", 0.85)
+
     return MatchResult(None, "new_cluster", 0.0)
 
 
@@ -85,3 +89,36 @@ def _cluster_by_exact_identity(session: Session, job: NormalizedJob) -> JobClust
             continue
         return cluster
     return None
+
+
+def _cluster_by_description_signature(session: Session, job: NormalizedJob) -> JobCluster | None:
+    if not job.description_sha256:
+        return None
+    normalized_company = normalize_company_name(job.company_name)
+    normalized_title = normalize_title(job.title)
+    stmt = (
+        select(JobCluster, NormalizedJob)
+        .join(JobClusterMember, JobClusterMember.cluster_id == JobCluster.id)
+        .join(NormalizedJob, NormalizedJob.id == JobClusterMember.normalized_job_id)
+        .where(NormalizedJob.id != job.id)
+        .where(NormalizedJob.description_sha256 == job.description_sha256)
+    )
+    for cluster, candidate in session.execute(stmt):
+        if normalize_company_name(candidate.company_name) != normalized_company:
+            continue
+        if normalize_title(candidate.title) != normalized_title:
+            continue
+        if not _location_types_compatible(candidate.location_type, job.location_type):
+            continue
+        if not _country_codes_compatible(candidate.country_code, job.country_code):
+            continue
+        return cluster
+    return None
+
+
+def _location_types_compatible(left: str, right: str) -> bool:
+    return left == right or left == "unknown" or right == "unknown"
+
+
+def _country_codes_compatible(left: str | None, right: str | None) -> bool:
+    return left == right or left is None or right is None

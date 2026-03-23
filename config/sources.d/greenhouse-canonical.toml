@@ -1,8 +1,0 @@
-name = "canonical-greenhouse"
-kind = "greenhouse"
-enabled = false
-priority = 20
-trust_weight = 1.1
-company_name = "Canonical"
-board_token = "canonical"
-include_content = true

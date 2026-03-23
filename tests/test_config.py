@@ -8,6 +8,10 @@ from pydantic import ValidationError
 from findmejobs.config.loader import load_app_config, load_profile_config, load_source_configs
 
 
+def _write_sources_yaml(path: Path, entries: list[str]) -> None:
+    path.write_text("\n".join(["version: v1", "sources:", *entries]), encoding="utf-8")
+
+
 def test_valid_config_loads_correctly(runtime_config_files: tuple[Path, Path, Path]) -> None:
     app_path, profile_path, sources_dir = runtime_config_files
     app_config = load_app_config(app_path)
@@ -20,15 +24,18 @@ def test_valid_config_loads_correctly(runtime_config_files: tuple[Path, Path, Pa
 
 
 def test_invalid_source_config_fails_clearly(tmp_path: Path) -> None:
-    sources_dir = tmp_path / "sources.d"
-    sources_dir.mkdir(parents=True)
-    (sources_dir / "bad.toml").write_text(
-        '\n'.join(['name = "bad"', 'kind = "not-real"', "enabled = true"]),
-        encoding="utf-8",
+    sources_path = tmp_path / "sources.yaml"
+    _write_sources_yaml(
+        sources_path,
+        [
+            "  - name: bad",
+            "    kind: not-real",
+            "    enabled: true",
+        ],
     )
 
     with pytest.raises(ValidationError) as exc:
-        load_source_configs(sources_dir)
+        load_source_configs(sources_path)
 
     assert "not-real" in str(exc.value)
 
@@ -67,54 +74,30 @@ def test_yaml_profile_pair_loads_correctly(tmp_path: Path) -> None:
 
 
 def test_ph_board_source_configs_load_with_lower_default_trust(tmp_path: Path) -> None:
-    sources_dir = tmp_path / "sources.d"
-    sources_dir.mkdir(parents=True)
-    (sources_dir / "jobstreet.toml").write_text(
-        '\n'.join(
-            [
-                'name = "jobstreet-ph"',
-                'kind = "jobstreet_ph"',
-                'enabled = true',
-                'board_url = "https://api.example.test/jobstreet"',
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (sources_dir / "kalibrr.toml").write_text(
-        '\n'.join(
-            [
-                'name = "kalibrr-ph"',
-                'kind = "kalibrr"',
-                'enabled = true',
-                'board_url = "https://api.example.test/kalibrr"',
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (sources_dir / "bossjob.toml").write_text(
-        '\n'.join(
-            [
-                'name = "bossjob-ph"',
-                'kind = "bossjob_ph"',
-                'enabled = true',
-                'board_url = "https://api.example.test/bossjob"',
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (sources_dir / "foundit.toml").write_text(
-        '\n'.join(
-            [
-                'name = "foundit-ph"',
-                'kind = "foundit_ph"',
-                'enabled = true',
-                'board_url = "https://api.example.test/foundit"',
-            ]
-        ),
-        encoding="utf-8",
+    sources_path = tmp_path / "sources.yaml"
+    _write_sources_yaml(
+        sources_path,
+        [
+            "  - name: jobstreet-ph",
+            "    kind: jobstreet_ph",
+            "    enabled: true",
+            "    board_url: https://api.example.test/jobstreet",
+            "  - name: kalibrr-ph",
+            "    kind: kalibrr",
+            "    enabled: true",
+            "    board_url: https://api.example.test/kalibrr",
+            "  - name: bossjob-ph",
+            "    kind: bossjob_ph",
+            "    enabled: true",
+            "    board_url: https://api.example.test/bossjob",
+            "  - name: foundit-ph",
+            "    kind: foundit_ph",
+            "    enabled: true",
+            "    board_url: https://api.example.test/foundit",
+        ],
     )
 
-    sources = load_source_configs(sources_dir)
+    sources = load_source_configs(sources_path)
     trust_weights = {source.kind: source.trust_weight for source in sources}
 
     assert trust_weights["jobstreet_ph"] < 1.0
@@ -124,21 +107,18 @@ def test_ph_board_source_configs_load_with_lower_default_trust(tmp_path: Path) -
 
 
 def test_workable_source_config_loads_with_expected_defaults(tmp_path: Path) -> None:
-    sources_dir = tmp_path / "sources.d"
-    sources_dir.mkdir(parents=True)
-    (sources_dir / "workable.toml").write_text(
-        '\n'.join(
-            [
-                'name = "workable-main"',
-                'kind = "workable"',
-                'enabled = true',
-                'account_subdomain = "example"',
-            ]
-        ),
-        encoding="utf-8",
+    sources_path = tmp_path / "sources.yaml"
+    _write_sources_yaml(
+        sources_path,
+        [
+            "  - name: workable-main",
+            "    kind: workable",
+            "    enabled: true",
+            "    account_subdomain: example",
+        ],
     )
 
-    source = load_source_configs(sources_dir)[0]
+    source = load_source_configs(sources_path)[0]
 
     assert source.kind == "workable"
     assert source.trust_weight == 1.0
@@ -147,32 +127,22 @@ def test_workable_source_config_loads_with_expected_defaults(tmp_path: Path) -> 
 
 
 def test_breezy_hr_and_jobvite_source_configs_load_with_expected_defaults(tmp_path: Path) -> None:
-    sources_dir = tmp_path / "sources.d"
-    sources_dir.mkdir(parents=True)
-    (sources_dir / "breezy.toml").write_text(
-        '\n'.join(
-            [
-                'name = "breezy-main"',
-                'kind = "breezy_hr"',
-                'enabled = true',
-                'company_subdomain = "example"',
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (sources_dir / "jobvite.toml").write_text(
-        '\n'.join(
-            [
-                'name = "jobvite-main"',
-                'kind = "jobvite"',
-                'enabled = true',
-                'company_code = "example"',
-            ]
-        ),
-        encoding="utf-8",
+    sources_path = tmp_path / "sources.yaml"
+    _write_sources_yaml(
+        sources_path,
+        [
+            "  - name: breezy-main",
+            "    kind: breezy_hr",
+            "    enabled: true",
+            "    company_subdomain: example",
+            "  - name: jobvite-main",
+            "    kind: jobvite",
+            "    enabled: true",
+            "    company_code: example",
+        ],
     )
 
-    sources = {source.kind: source for source in load_source_configs(sources_dir)}
+    sources = {source.kind: source for source in load_source_configs(sources_path)}
 
     assert sources["breezy_hr"].trust_weight == 1.0
     assert sources["breezy_hr"].priority == 0
@@ -181,24 +151,21 @@ def test_breezy_hr_and_jobvite_source_configs_load_with_expected_defaults(tmp_pa
 
 
 def test_ph_board_source_configs_accept_explicit_priority_trust_and_fetch_cap(tmp_path: Path) -> None:
-    sources_dir = tmp_path / "sources.d"
-    sources_dir.mkdir(parents=True)
-    (sources_dir / "jobstreet.toml").write_text(
-        '\n'.join(
-            [
-                'name = "jobstreet-ph"',
-                'kind = "jobstreet_ph"',
-                'enabled = false',
-                "priority = 7",
-                "trust_weight = 0.6",
-                "fetch_cap = 25",
-                'board_url = "https://api.example.test/jobstreet"',
-            ]
-        ),
-        encoding="utf-8",
+    sources_path = tmp_path / "sources.yaml"
+    _write_sources_yaml(
+        sources_path,
+        [
+            "  - name: jobstreet-ph",
+            "    kind: jobstreet_ph",
+            "    enabled: false",
+            "    priority: 7",
+            "    trust_weight: 0.6",
+            "    fetch_cap: 25",
+            "    board_url: https://api.example.test/jobstreet",
+        ],
     )
 
-    source = load_source_configs(sources_dir)[0]
+    source = load_source_configs(sources_path)[0]
 
     assert source.enabled is False
     assert source.priority == 7
@@ -236,12 +203,11 @@ def test_ph_board_source_configs_accept_explicit_priority_trust_and_fetch_cap(tm
     ],
 )
 def test_ph_board_source_configs_fail_clearly_on_invalid_values(tmp_path: Path, lines: list[str]) -> None:
-    sources_dir = tmp_path / "sources.d"
-    sources_dir.mkdir(parents=True)
-    (sources_dir / "bad.toml").write_text("\n".join(lines), encoding="utf-8")
+    sources_path = tmp_path / "sources.yaml"
+    _write_sources_yaml(sources_path, [f"  - {lines[0]}", *[f"    {line}" for line in lines[1:]]])
 
     with pytest.raises(ValidationError):
-        load_source_configs(sources_dir)
+        load_source_configs(sources_path)
 
 
 def test_app_config_rejects_inline_smtp_password(tmp_path: Path) -> None:

@@ -23,7 +23,7 @@ from findmejobs.config.models import (
     WorkableSourceConfig,
 )
 from findmejobs.db.models import NormalizedJob, RawDocument, SourceFetchRun, SourceJob
-from findmejobs.domain.source import FetchArtifact
+from findmejobs.domain.source import FetchArtifact, transport_for_kind
 from findmejobs.ingestion.adapters.ashby import AshbyAdapter
 from findmejobs.ingestion.adapters.bossjob_ph import BossjobPHAdapter
 from findmejobs.ingestion.adapters.breezy_hr import BreezyHRAdapter
@@ -84,6 +84,7 @@ def test_greenhouse_adapter_parses_realistic_fixture(fixtures_dir: Path) -> None
 
     assert len(records) == 2
     assert records[0].source_job_key == "101"
+    assert records[0].source_company_id == "acme"
     assert records[0].company == "Acme"
     assert records[0].location_text == "Remote, Philippines"
     assert records[0].tags_raw == ["Engineering"]
@@ -106,6 +107,7 @@ def test_lever_adapter_parses_realistic_fixture(fixtures_dir: Path) -> None:
 
     assert len(records) == 1
     assert records[0].source_job_key == "lever-1"
+    assert records[0].source_company_id == "example"
     assert records[0].company == "Example Labs"
     assert records[0].location_text == "Remote, Philippines"
 
@@ -154,6 +156,7 @@ def test_smartrecruiters_adapter_parses_realistic_fixture(fixtures_dir: Path) ->
 
     assert len(records) == 1
     assert records[0].source_job_key == "sr-1"
+    assert records[0].source_company_id == "example"
     assert records[0].company == "Example Corp"
 
 
@@ -276,8 +279,18 @@ def test_ashby_adapter_parses_realistic_fixture(fixtures_dir: Path) -> None:
 
     assert len(records) == 1
     assert records[0].source_job_key == "ashby-1"
+    assert records[0].source_company_id == "ashby"
     assert records[0].company == "Example Infra"
     assert records[0].tags_raw == ["Infrastructure"]
+
+
+def test_source_kinds_map_to_expected_transport_modes() -> None:
+    assert transport_for_kind("greenhouse") == "api_json"
+    assert transport_for_kind("lever") == "api_json"
+    assert transport_for_kind("ashby") == "api_json"
+    assert transport_for_kind("smartrecruiters") == "api_json"
+    assert transport_for_kind("rss") == "feed_xml"
+    assert transport_for_kind("direct_page") == "html_scrape"
 
 
 def test_direct_page_adapter_extracts_structured_and_fallback_pages(fixtures_dir: Path) -> None:

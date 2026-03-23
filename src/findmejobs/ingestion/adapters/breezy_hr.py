@@ -34,6 +34,7 @@ class BreezyHRAdapter(SourceAdapter):
                     source_job_key=job_id,
                     source_url=source_url,
                     apply_url=source_url,
+                    source_company_id=config.company_subdomain,
                     title=title,
                     company=_company_name(job, config.company_name),
                     location_text=location,

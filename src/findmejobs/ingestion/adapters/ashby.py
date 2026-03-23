@@ -38,6 +38,7 @@ class AshbyAdapter(SourceAdapter):
                     source_job_key=str(job_id),
                     source_url=source_url,
                     apply_url=job.get("applyUrl") or source_url,
+                    source_company_id=_company_identifier(job, config),
                     title=title,
                     company=_company_name(job, config.company_name),
                     location_text=location_text,
@@ -61,3 +62,15 @@ def _company_name(job: dict, configured_company_name: str | None) -> str:
         if cleaned:
             return cleaned
     return configured_company_name or "Unknown"
+
+
+def _company_identifier(job: dict, config: AshbySourceConfig) -> str:
+    for key in ("organizationId", "companyId"):
+        value = str(job.get(key, "")).strip()
+        if value:
+            return value
+    path = str(config.board_url).rstrip("/").split("/")
+    identifier = path[-1] if path else str(config.board_url)
+    if "." in identifier:
+        identifier = identifier.split(".", 1)[0]
+    return identifier

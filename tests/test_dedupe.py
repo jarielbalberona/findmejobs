@@ -180,3 +180,47 @@ def test_cluster_merge_does_not_fail_when_last_seen_mixes_naive_and_aware(sessio
         _cluster, merged = assign_job_cluster(session, job_b, new_id)
         session.commit()
         assert merged is True
+
+
+def test_description_signature_merges_cross_source_reposts_with_weaker_location_match(session_factory) -> None:
+    now = utcnow()
+    with session_factory() as session:
+        job_a = _make_normalized_job(
+            session,
+            source_id="ats-source",
+            source_job_key="ats-1",
+            source_url="https://boards.example.test/jobs/1",
+            canonical_url="https://boards.example.test/jobs/1",
+            company="Example Pty Ltd",
+            title="Backend Engineer",
+            location="Remote, Australia",
+            now=now,
+        )
+        job_a.canonical_url = None
+        job_a.country_code = "AU"
+        job_a.description_text = "Python SQL AWS role"
+        job_a.description_sha256 = "same-description"
+        assign_job_cluster(session, job_a, new_id)
+
+        job_b = _make_normalized_job(
+            session,
+            source_id="repost-source",
+            source_job_key="repost-1",
+            source_url="https://jobs.board.test/backend-engineer",
+            canonical_url=None,
+            company="Example",
+            title="Backend Engineer",
+            location="Australia",
+            now=now,
+        )
+        job_b.location_type = "unknown"
+        job_b.country_code = "AU"
+        job_b.description_text = "Python SQL AWS role"
+        job_b.description_sha256 = "same-description"
+
+        cluster, merged = assign_job_cluster(session, job_b, new_id)
+        session.commit()
+
+        member_count = session.scalar(select(text("count(*)")).select_from(JobClusterMember).where(JobClusterMember.cluster_id == cluster.id))
+        assert merged is True
+        assert member_count == 2

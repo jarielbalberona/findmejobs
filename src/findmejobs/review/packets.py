@@ -61,6 +61,8 @@ def _salary_summary(job: CanonicalJob) -> str | None:
 def sanitize_review_text(value: str) -> str:
     normalized = value or ""
     normalized = unescape(normalized)
+    if HTML_TAG_RE.search(normalized):
+        raise ValueError("description contains markup")
     normalized = HTML_TAG_RE.sub("", normalized)
     cleaned_lines: list[str] = []
     for line in normalized.splitlines():

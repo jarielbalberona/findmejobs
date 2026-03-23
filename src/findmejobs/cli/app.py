@@ -1314,7 +1314,16 @@ def reprocess_normalize(
                     raise ValueError(f"source_job_not_found:{source_job_id}")
                 source_job, source, normalized = row
                 record = _record_from_existing(source_job, source, normalized)
-                canonical = normalize_job(source_job.id, source.id, source_job.seen_at, record)
+                canonical = normalize_job(
+                    source_job.id,
+                    source.id,
+                    source_job.seen_at,
+                    record,
+                    source_name=source.name,
+                    source_kind=source.kind,
+                    source_priority=source.priority,
+                    source_trust_weight=source.trust_weight,
+                )
                 from findmejobs.db.repositories import upsert_normalized_job
                 from findmejobs.dedupe.clustering import assign_job_cluster
 
@@ -2458,6 +2467,7 @@ def _record_from_existing(source_job: SourceJob, source: Source, normalized: Nor
         source_job_key=source_job.source_job_key,
         source_url=source_job.source_url,
         apply_url=source_job.apply_url,
+        source_company_id=payload.get("source_company_id"),
         title=str(payload.get("title") or normalized.title),
         company=str(payload.get("company") or normalized.company_name or source.name),
         location_text=str(payload.get("location_text") or normalized.location_text or ""),

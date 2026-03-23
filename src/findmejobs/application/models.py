@@ -174,6 +174,10 @@ class ApplicationMatchedProfileSummary(BaseModel):
     full_name: str | None = None
     email: str | None = None
     location_text: str | None = None
+    years_experience: int | None = None
+    linkedin_url: str | None = None
+    github_url: str | None = None
+    phone: str | None = None
     target_titles: list[str] = Field(default_factory=list)
     matched_required_skills: list[str] = Field(default_factory=list)
     missing_required_skills: list[str] = Field(default_factory=list)
@@ -236,13 +240,23 @@ class ApplicationPacketModel(BaseModel):
     score: ApplicationScoreSummary
     review_summary: ApplicationReviewSummary
     matched_profile: ApplicationMatchedProfileSummary
+    job_hooks: list[str] = Field(default_factory=list)
+    top_relevant_highlights: list[str] = Field(default_factory=list)
     relevant_strengths: list[str] = Field(default_factory=list)
     detected_gaps: list[str] = Field(default_factory=list)
     unknowns: list[str] = Field(default_factory=list)
     application_questions: list[ApplicationQuestionModel] = Field(default_factory=list)
     safe_context: list[str] = Field(default_factory=list)
 
-    @field_validator("relevant_strengths", "detected_gaps", "unknowns", "safe_context", mode="before")
+    @field_validator(
+        "job_hooks",
+        "top_relevant_highlights",
+        "relevant_strengths",
+        "detected_gaps",
+        "unknowns",
+        "safe_context",
+        mode="before",
+    )
     @classmethod
     def _normalize_packet_lists(cls, value: object) -> list[str]:
         return _clean_text_list(value, field_name="application_packet_list", max_length=MAX_PACKET_LIST_ITEM_LENGTH)
@@ -294,6 +308,19 @@ class CoverLetterDraftModel(BaseModel):
     @classmethod
     def _normalize_missing_inputs(cls, value: object) -> list[str]:
         return _clean_text_list(value, field_name="cover_letter_missing_inputs", max_length=MAX_MISSING_INPUT_KEY_LENGTH)
+
+
+class OpenClawModelHints(BaseModel):
+    selection: str = "best_available"
+    reasoning_effort: str = "high"
+    requested_model: str | None = None
+
+    @field_validator("selection", "reasoning_effort", "requested_model", mode="before")
+    @classmethod
+    def _normalize_scalars(cls, value: object) -> object:
+        if value is None:
+            return None
+        return _clean_text(str(value), field_name="openclaw_model_hint", max_length=80)
 
 
 class ApplicationAnswerDraftModel(BaseModel):
@@ -357,6 +384,7 @@ class CoverLetterDraftRequestModel(BaseModel):
     draft_type: str = "cover_letter"
     prompt_version: str
     instructions: str
+    model_hints: OpenClawModelHints = Field(default_factory=OpenClawModelHints)
     application_packet: ApplicationPacketModel
     output_schema: dict[str, object]
 
@@ -394,6 +422,7 @@ class AnswerDraftRequestModel(BaseModel):
     draft_type: str = "answers"
     prompt_version: str
     instructions: str
+    model_hints: OpenClawModelHints = Field(default_factory=OpenClawModelHints)
     application_packet: ApplicationPacketModel
     questions: list[ApplicationQuestionModel]
     output_schema: dict[str, object]

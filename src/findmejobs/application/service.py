@@ -102,6 +102,42 @@ DOMAIN_MARKERS = (
     "saas",
     "payments",
 )
+COVER_LETTER_INTERNAL_PHRASES = (
+    "ranked packet",
+    "application packet",
+    "matched signals",
+    "score breakdown",
+    "hard filters",
+    "title alignment",
+    "must_have_skills",
+    "preferred_skills",
+    "location_fit",
+    "remote_fit",
+    "source:",
+    "source name",
+    "packet-backed",
+    "openclaw",
+    "greenhouse",
+    "autofill",
+    "scraper",
+    "alignment",
+    "ranked",
+    "packet",
+)
+
+_SCORE_BREAKDOWN_LABELS = {
+    "title_alignment": "Title fit",
+    "title_family": "Related title fit",
+    "must_have_skills": "Core skills match",
+    "preferred_skills": "Supporting skills match",
+    "location_fit": "Location fit",
+    "remote_fit": "Remote fit",
+    "recency": "Recency",
+    "company_preference": "Company preference",
+    "timezone_fit": "Timezone fit",
+    "source_trust": "Source trust",
+    "feedback_signal": "Prior feedback",
+}
 
 
 @dataclass(slots=True)
@@ -524,6 +560,13 @@ class ApplicationDraftService:
         elif profile.preferred_locations:
             summary_lines.append(f"Preferred locations: {', '.join(profile.preferred_locations[:3])}")
         strengths = self._build_strengths(profile, matched_required, matched_preferred)
+        parsed_context = self._extract_job_description_context(
+            sanitized_excerpt,
+            profile=profile,
+            matched_required=matched_required,
+            matched_preferred=matched_preferred,
+            tags=job.tags_json or [],
+        )
         detected_gaps = []
         if missing_required:
             detected_gaps.append(f"Required skills not obvious in the sanitized job text: {', '.join(missing_required[:4])}")
@@ -588,11 +631,21 @@ class ApplicationDraftService:
                 full_name=profile.full_name,
                 email=profile.email,
                 location_text=profile.location_text,
+                years_experience=profile.years_experience,
+                linkedin_url=profile.linkedin_url,
+                github_url=profile.github_url,
+                phone=profile.phone,
                 target_titles=profile.target_titles,
                 matched_required_skills=matched_required,
                 missing_required_skills=missing_required,
                 matched_preferred_skills=matched_preferred,
                 summary_lines=summary_lines,
+            ),
+            job_hooks=self._build_job_hooks(job, parsed_context),
+            top_relevant_highlights=self._build_top_relevant_highlights(
+                profile,
+                matched_required=matched_required,
+                matched_preferred=matched_preferred,
             ),
             relevant_strengths=strengths,
             detected_gaps=detected_gaps,
@@ -601,10 +654,7 @@ class ApplicationDraftService:
             safe_context=self._safe_context(
                 job,
                 context.source.name,
-                sanitized_excerpt=sanitized_excerpt,
-                profile=profile,
-                matched_required=matched_required,
-                matched_preferred=matched_preferred,
+                parsed_context=parsed_context,
             ),
         )
         missing_inputs = self._detect_missing_inputs(packet, profile)
@@ -767,38 +817,59 @@ class ApplicationDraftService:
 
     def _build_strengths(self, profile: ProfileConfig, matched_required: list[str], matched_preferred: list[str]) -> list[str]:
         strengths: list[str] = []
+        seen: set[str] = set()
+
+        def _push(text: str) -> None:
+            cleaned = collapse_whitespace(text).strip()
+            if not cleaned:
+                return
+            key = cleaned.casefold()
+            if key in seen:
+                return
+            seen.add(key)
+            strengths.append(cleaned)
+
         if profile.application.professional_summary:
-            strengths.append(profile.application.professional_summary)
+            _push(profile.application.professional_summary)
+        if profile.years_experience is not None:
+            _push(
+                f"About {profile.years_experience} years shipping production software across web, backend, and platform work."
+            )
         if matched_required:
-            strengths.append(f"Relevant core skills: {', '.join(matched_required[:4])}.")
+            _push(f"Relevant core skills: {', '.join(matched_required[:4])}.")
         if matched_preferred:
-            strengths.append(f"Additional aligned skills: {', '.join(matched_preferred[:4])}.")
+            _push(f"Supporting skills: {', '.join(matched_preferred[:4])}.")
+        for item in profile.strengths[:4]:
+            _push(item)
         if profile.target_titles:
-            strengths.append(f"Target role focus includes {', '.join(profile.target_titles[:3])}.")
-        strengths.extend(profile.application.key_achievements[:2])
-        strengths.extend(profile.application.project_highlights[:2])
+            _push(f"Target role focus includes {', '.join(profile.target_titles[:3])}.")
+        for item in profile.application.key_achievements[:3]:
+            _push(item)
+        for item in profile.application.project_highlights[:3]:
+            _push(item)
         if not strengths:
-            strengths.append("Profile contains target-role alignment and a constrained skills list, but no richer application summary.")
+            _push("Target roles and skills are defined; add richer narrative in profile.application for stronger drafts.")
         return strengths[:6]
 
     def _summarize_score(self, breakdown: dict[str, float]) -> list[str]:
         positive = [(key, value) for key, value in breakdown.items() if isinstance(value, (int, float)) and value > 0]
         positive.sort(key=lambda item: item[1], reverse=True)
-        return [f"{key.replace('_', ' ')}: {value:.2f}" for key, value in positive[:4]]
+        lines: list[str] = []
+        for key, value in positive[:4]:
+            label = _SCORE_BREAKDOWN_LABELS.get(key, key.replace("_", " "))
+            lines.append(f"{label}: {value:.2f}")
+        return lines
 
     def _safe_context(
         self,
         job: NormalizedJob,
         source_name: str,
         *,
-        sanitized_excerpt: str,
-        profile: ProfileConfig,
-        matched_required: list[str],
-        matched_preferred: list[str],
+        parsed_context: dict[str, list[str]],
     ) -> list[str]:
         context = [
             f"Role: {job.title} at {job.company_name}",
-            f"Source: {source_name}",
+            f"Hiring feed label: {source_name}",
             f"Location: {job.location_text or 'Unknown'}",
             f"Employment type: {job.employment_type or 'Not specified'}",
             f"Seniority: {job.seniority or 'Not specified'}",
@@ -806,13 +877,6 @@ class ApplicationDraftService:
         ]
         if job.tags_json:
             context.append(f"Tags: {', '.join(job.tags_json[:6])}")
-        parsed_context = self._extract_job_description_context(
-            sanitized_excerpt,
-            profile=profile,
-            matched_required=matched_required,
-            matched_preferred=matched_preferred,
-            tags=job.tags_json or [],
-        )
         if parsed_context["responsibilities"]:
             context.append(f"Responsibilities cues: {' | '.join(parsed_context['responsibilities'])}")
         if parsed_context["requirements"]:
@@ -845,6 +909,59 @@ class ApplicationDraftService:
             "requirements": requirements,
             "stack": stack,
         }
+
+    def _build_job_hooks(self, job: NormalizedJob, parsed_context: dict[str, list[str]]) -> list[str]:
+        hooks: list[str] = []
+        if parsed_context["responsibilities"]:
+            hooks.append(f"Role focus: {parsed_context['responsibilities'][0]}")
+        if parsed_context["requirements"]:
+            hooks.append(f"Core expectation: {parsed_context['requirements'][0]}")
+        if parsed_context["stack"]:
+            hooks.append(f"Relevant stack and domain cues: {', '.join(parsed_context['stack'][:6])}")
+        if not hooks:
+            hooks.append(
+                f"The {job.title} role emphasizes practical delivery for {job.company_name} in a {job.location_text or 'remote'} setup."
+            )
+        return [truncate_text(collapse_whitespace(item), 180) for item in hooks[:3]]
+
+    def _build_top_relevant_highlights(
+        self,
+        profile: ProfileConfig,
+        *,
+        matched_required: list[str],
+        matched_preferred: list[str],
+    ) -> list[str]:
+        highlights: list[str] = []
+        if profile.application.professional_summary:
+            highlights.append(profile.application.professional_summary)
+        elif profile.summary:
+            highlights.append(profile.summary)
+        highlights.extend(profile.application.key_achievements[:3])
+        highlights.extend(profile.application.project_highlights[:3])
+        for item in profile.strengths[:2]:
+            highlights.append(item)
+        if matched_required:
+            highlights.append(f"Posting asks for: {', '.join(matched_required[:4])}.")
+        if matched_preferred:
+            highlights.append(f"Also relevant: {', '.join(matched_preferred[:4])}.")
+        if profile.recent_companies:
+            highlights.append(f"Recent delivery contexts include {', '.join(profile.recent_companies[:3])}.")
+        if profile.recent_titles:
+            highlights.append(f"Recent role focus: {', '.join(profile.recent_titles[:3])}.")
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for item in highlights:
+            normalized = collapse_whitespace(str(item or "")).strip()
+            if not normalized:
+                continue
+            key = normalized.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(truncate_text(normalized, 180))
+            if len(cleaned) >= 4:
+                break
+        return cleaned
 
     def _split_context_sentences(self, sanitized_excerpt: str) -> list[str]:
         if not sanitized_excerpt:
@@ -994,23 +1111,40 @@ class ApplicationDraftService:
         packet: ApplicationPacketModel,
         missing_inputs: list[ApplicationMissingInput],
     ) -> CoverLetterDraftModel:
-        intro_strength = packet.relevant_strengths[0].rstrip(".")
-        second_strength = packet.relevant_strengths[1].rstrip(".") if len(packet.relevant_strengths) > 1 else intro_strength
+        full_name = packet.matched_profile.full_name or ""
+        intro_prefix = f"I'm {full_name}, and I" if full_name else "I"
+        intro_highlight = packet.top_relevant_highlights[0] if packet.top_relevant_highlights else (
+            packet.relevant_strengths[0] if packet.relevant_strengths else "My background fits this role."
+        )
+        years = packet.matched_profile.years_experience
+        if years is not None and "year" not in intro_highlight.casefold():
+            intro_highlight = collapse_whitespace(f"{intro_highlight} I bring about {years} years in comparable delivery.")
+        why_fit = packet.job_hooks[0] if packet.job_hooks else (
+            packet.relevant_strengths[1] if len(packet.relevant_strengths) > 1 else intro_highlight
+        )
+        second_paragraph_lines: list[str] = []
+        if len(packet.top_relevant_highlights) > 1:
+            second_paragraph_lines.append(packet.top_relevant_highlights[1])
+        if len(packet.top_relevant_highlights) > 2:
+            second_paragraph_lines.append(packet.top_relevant_highlights[2])
+        if packet.matched_profile.matched_required_skills:
+            second_paragraph_lines.append(
+                f"I can contribute immediately with {', '.join(packet.matched_profile.matched_required_skills[:4])}."
+            )
+        second_paragraph = " ".join(second_paragraph_lines) if second_paragraph_lines else collapse_whitespace(why_fit)
         lines = [
-            "Dear Hiring Team,",
+            "Hi,",
             "",
             (
-                f"I am applying for the {packet.role_title} role at {packet.company_name}. "
-                f"The opportunity aligns with my current focus on {', '.join(packet.matched_profile.target_titles[:2]) or packet.role_title.lower()} "
-                f"and the profile strengths captured in this application packet."
+                f"{intro_prefix} am applying for the {packet.role_title} role at {packet.company_name}. "
+                f"{collapse_whitespace(intro_highlight)}"
             ),
             "",
-            (
-                f"My background is grounded in {intro_strength}. "
-                f"The job's sanitized requirements and score signals also align with {second_strength.lower()}."
-            ),
+            collapse_whitespace(second_paragraph),
             "",
-            "I would value the chance to discuss how that background can support the team.",
+            collapse_whitespace(why_fit),
+            "",
+            "I would welcome the chance to discuss how that background can support your team.",
             "",
             "Regards,",
         ]
@@ -1094,11 +1228,13 @@ class ApplicationDraftService:
         )
 
     def _fit_answer(self, packet: ApplicationPacketModel) -> str:
-        strengths = packet.relevant_strengths[:2]
+        strengths = packet.top_relevant_highlights[:2] or packet.relevant_strengths[:2]
+        first = strengths[0] if strengths else "my delivery experience on production systems"
+        second = strengths[1] if len(strengths) > 1 else "the practical responsibilities in this role"
+        matched = ", ".join(packet.matched_profile.matched_required_skills[:3])
         return collapse_whitespace(
-            f"My profile aligns with this role through {strengths[0].lower()} "
-            f"and {strengths[1].lower() if len(strengths) > 1 else 'a direct match to the role focus'}. "
-            f"The ranked packet also shows clear alignment on {', '.join(packet.score.matched_signals[:2]).replace('_', ' ')}."
+            f"My background aligns with this role through {first.lower()} and {second.lower()}. "
+            f"I can contribute with {matched or 'the core skills outlined in the role'} from day one."
         )
 
     def _motivation_answer(self, packet: ApplicationPacketModel) -> str:
@@ -1203,20 +1339,28 @@ class ApplicationDraftService:
         return {question.question_id: question for question in packet.application_questions}
 
     def _bounded_packet_text(self, packet: ApplicationPacketModel) -> str:
+        mp = packet.matched_profile
+        years = f"{mp.years_experience} years" if mp.years_experience is not None else ""
         values = [
             packet.company_name,
             packet.role_title,
             packet.canonical_job.description_excerpt,
+            *packet.job_hooks,
+            *packet.top_relevant_highlights,
             *packet.relevant_strengths,
             *packet.detected_gaps,
             *packet.unknowns,
             *packet.safe_context,
             *packet.score.breakdown_summary,
             *packet.score.matched_signals,
-            *packet.matched_profile.target_titles,
-            *packet.matched_profile.matched_required_skills,
-            *packet.matched_profile.matched_preferred_skills,
-            *packet.matched_profile.summary_lines,
+            *mp.target_titles,
+            *mp.matched_required_skills,
+            *mp.matched_preferred_skills,
+            *mp.summary_lines,
+            years,
+            mp.linkedin_url or "",
+            mp.github_url or "",
+            mp.phone or "",
         ]
         return " ".join(values).casefold()
 
@@ -1225,6 +1369,12 @@ class ApplicationDraftService:
         for match in UNSUPPORTED_EXPERIENCE_RE.findall(text):
             if match.casefold() not in allowed_text:
                 raise ValueError(f"{field_name}_contains_unsupported_experience_claim")
+
+    def _assert_no_internal_cover_letter_jargon(self, text: str) -> None:
+        lowered = text.casefold()
+        for phrase in COVER_LETTER_INTERNAL_PHRASES:
+            if phrase in lowered:
+                raise ValueError("cover_letter_contains_internal_jargon")
 
     def _validate_imported_cover_letter(
         self,
@@ -1244,8 +1394,11 @@ class ApplicationDraftService:
             raise ValueError("cover_letter_missing_company_name")
         if packet.role_title.casefold() not in imported.body_markdown.casefold():
             raise ValueError("cover_letter_missing_role_title")
+        if packet.matched_profile.full_name and packet.matched_profile.full_name.casefold() not in imported.body_markdown.casefold():
+            raise ValueError("cover_letter_missing_signature_name")
         if len(imported.body_markdown.split()) > 180:
             raise ValueError("cover_letter_too_long")
+        self._assert_no_internal_cover_letter_jargon(imported.body_markdown)
         self._assert_no_unsupported_experience_claim(imported.body_markdown, packet, field_name="cover_letter")
 
     def _required_missing_key_for_question(
@@ -1420,6 +1573,12 @@ class ApplicationDraftService:
             f"- cover_letter_origin: `{cover_letter.origin if cover_letter else 'not_generated'}`",
             f"- answers_origin: `{answers.origin if answers else 'not_generated'}`",
             f"- history_snapshots: `{history_entries}`",
+            "",
+            "## Job Hooks",
+            *[f"- {item}" for item in packet.job_hooks],
+            "",
+            "## Top Relevant Highlights",
+            *[f"- {item}" for item in packet.top_relevant_highlights],
             "",
             "## Relevant Strengths",
             *[f"- {item}" for item in packet.relevant_strengths],

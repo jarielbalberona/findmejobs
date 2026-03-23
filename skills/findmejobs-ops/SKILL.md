@@ -27,6 +27,8 @@ Use **app-owned CLI commands** only. Do not edit `config/*.yaml` or TOML by hand
 - `findmejobs profile show --json` — merged canonical profile
 - `findmejobs ranking show --json` — canonical `ranking.yaml` as structured JSON
 - `findmejobs applications queue --json` — application drafting backlog
+- `findmejobs apply list --json` — browser-assisted apply session backlog
+- `findmejobs apply status --job-id <id> --json` — current guided/assisted apply state
 
 ## Troubleshooting
 
@@ -41,6 +43,8 @@ Use **app-owned CLI commands** only. Do not edit `config/*.yaml` or TOML by hand
 - `flows/daily-ops.md`
 - `flows/profile-refresh.md`
 - `flows/troubleshoot.md`
+- `flows/guided-apply.md`
+- `flows/assisted-apply.md`
 
 ## Examples
 
@@ -48,3 +52,11 @@ Use **app-owned CLI commands** only. Do not edit `config/*.yaml` or TOML by hand
 - `examples/json/` — sample `--json` envelopes (illustrative)
 
 This skill stays thin: **no business logic here**—only how to drive the installed CLI safely.
+
+Apply-specific rules:
+
+- Final submit is never automatic. If the browser reports that submit is available, stop and tell the operator it is blocked by design.
+- Use `findmejobs apply prepare` before `apply open` when packet or validated drafts are missing.
+- Prefer `findmejobs apply status --json` and `findmejobs apply report --json` over reading state files directly.
+- Use `findmejobs apply approve` only for explicit non-submit approval gates.
+- Never claim submission happened unless the operator manually submitted and separately confirmed it.

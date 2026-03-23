@@ -17,6 +17,7 @@ from findmejobs import __version__ as FINDMEJOBS_VERSION
 from sqlalchemy import select
 
 from findmejobs.application.service import ApplicationDraftService
+from findmejobs.apply.service import ApplySessionService
 from findmejobs.config.loader import ensure_directories, load_app_config, load_profile_config, load_source_configs, resolve_profile_config_path
 from findmejobs.config.models import RankingWeights, SourceConfig, SourcesFileConfig
 from findmejobs.config.source_file import (
@@ -94,6 +95,7 @@ sources_app = typer.Typer(help="Add/list/update validated source definitions in 
 submissions_app = typer.Typer(help="Track human-triggered application submissions and outcomes")
 onboarding_app = typer.Typer(help="First-time operator setup checks (composed CLI steps)")
 applications_app = typer.Typer(help="Per-job application drafting state (read-only queues)")
+apply_app = typer.Typer(help="Browser-assisted application sessions with explicit approval gates")
 app.add_typer(config_app, name="config")
 app.add_typer(review_app, name="review")
 app.add_typer(profile_app, name="profile")
@@ -106,6 +108,7 @@ app.add_typer(sources_app, name="sources")
 app.add_typer(submissions_app, name="submissions")
 app.add_typer(onboarding_app, name="onboarding")
 app.add_typer(applications_app, name="applications")
+app.add_typer(apply_app, name="apply")
 
 
 def _version_option(value: bool) -> None:
@@ -149,6 +152,7 @@ sources_app.callback(invoke_without_command=True)(_typer_group_show_help_callbac
 submissions_app.callback(invoke_without_command=True)(_typer_group_show_help_callback)
 onboarding_app.callback(invoke_without_command=True)(_typer_group_show_help_callback)
 applications_app.callback(invoke_without_command=True)(_typer_group_show_help_callback)
+apply_app.callback(invoke_without_command=True)(_typer_group_show_help_callback)
 
 LOGGER = logging.getLogger(__name__)
 SUBMISSION_STATUSES = {"submitted", "interview", "rejected", "offer", "withdrawn"}
@@ -1709,6 +1713,10 @@ def _application_service(state_root: Path) -> ApplicationDraftService:
     return ApplicationDraftService(state_root=state_root)
 
 
+def _apply_service(application_state_root: Path, apply_state_root: Path) -> ApplySessionService:
+    return ApplySessionService(application_state_root=application_state_root, apply_state_root=apply_state_root)
+
+
 @app.command("prepare-application")
 def prepare_application(
     job_id: str = typer.Option(...),
@@ -2024,6 +2032,236 @@ def draft_applications(
     _echo_ui_export_status(ui_art, enabled=export_ui_data)
     if failures:
         raise typer.Exit(code=1)
+
+
+@apply_app.command("prepare")
+def apply_prepare(
+    job_id: str = typer.Option(...),
+    questions_file: Path | None = typer.Option(None, exists=True, dir_okay=False),
+    app_config_path: Path = typer.Option(Path("config/app.toml"), exists=True),
+    profile_path: Path = typer.Option(Path("config/profile.yaml")),
+    sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
+    application_state_root: Path = typer.Option(Path("state/applications")),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    app_config, profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_path)
+    service = _application_service(application_state_root)
+    with FileLock(_pipeline_lock_path(app_config)):
+        with session_factory() as session:
+            try:
+                result = service.regenerate_application(session, profile, job_id=job_id, questions_file=questions_file)
+            except (FileNotFoundError, ValueError) as exc:
+                _emit_standard_envelope(json_out, "apply_prepare", False, errors=[str(exc)], text=f"apply prepare failed: {exc}")
+                raise typer.Exit(code=1)
+    _emit_standard_envelope(
+        json_out,
+        "apply_prepare",
+        True,
+        summary=result,
+        artifacts={"application_state_root": str(application_state_root.resolve())},
+        text=f"apply prepare complete: job_id={job_id}",
+    )
+
+
+@apply_app.command("open")
+def apply_open(
+    job_id: str = typer.Option(...),
+    mode: str = typer.Option(..., "--mode"),
+    browser_profile: str | None = typer.Option(None, "--browser-profile"),
+    overrides_file: Path | None = typer.Option(None, "--overrides-file", exists=True, dir_okay=False),
+    app_config_path: Path = typer.Option(Path("config/app.toml"), exists=True),
+    profile_path: Path = typer.Option(Path("config/profile.yaml")),
+    sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
+    application_state_root: Path = typer.Option(Path("state/applications")),
+    apply_state_root: Path = typer.Option(Path("state/apply_sessions")),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    app_config, profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_path)
+    service = _apply_service(application_state_root, apply_state_root)
+    with FileLock(_pipeline_lock_path(app_config)):
+        with session_factory() as session:
+            try:
+                overrides = service.load_overrides_file(overrides_file)
+                result = service.open_session(
+                    session,
+                    profile,
+                    job_id=job_id,
+                    mode=mode,
+                    browser_profile=browser_profile,
+                    overrides=overrides,
+                )
+            except (FileNotFoundError, ValueError, ValidationError, json.JSONDecodeError) as exc:
+                _emit_standard_envelope(json_out, "apply_open", False, errors=[str(exc)], text=f"apply open failed: {exc}")
+                raise typer.Exit(code=1)
+    summary = result.session.model_dump(mode="json")
+    summary.update(
+        {
+            "candidate_inputs": len(result.candidate_inputs),
+            "unresolved_fields": len(result.unresolved_fields),
+            "pending_approvals": len([item for item in result.approvals_required if item.status == "pending"]),
+        }
+    )
+    _emit_standard_envelope(
+        json_out,
+        "apply_open",
+        True,
+        summary=summary,
+        warnings=result.warnings,
+        artifacts={
+            "apply_state_root": str(apply_state_root.resolve()),
+            "session_root": str((apply_state_root / job_id).resolve()),
+            "browser_request": str((apply_state_root / job_id / "openclaw" / "browser.request.json").resolve()),
+        },
+        text=f"apply open complete: job_id={job_id} mode={mode} status={result.session.status}",
+    )
+
+
+@apply_app.command("status")
+def apply_status(
+    job_id: str = typer.Option(...),
+    apply_state_root: Path = typer.Option(Path("state/apply_sessions")),
+    application_state_root: Path = typer.Option(Path("state/applications")),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    service = _apply_service(application_state_root, apply_state_root)
+    try:
+        status = service.get_status(job_id=job_id)
+    except (FileNotFoundError, ValueError) as exc:
+        _emit_standard_envelope(json_out, "apply_status", False, errors=[str(exc)], text=f"apply status failed: {exc}")
+        raise typer.Exit(code=1)
+    _emit_standard_envelope(
+        json_out,
+        "apply_status",
+        True,
+        summary={
+            "session": status.session.model_dump(mode="json"),
+            "filled_fields": [item.model_dump(mode="json") for item in status.filled_fields],
+            "unresolved_fields": [item.model_dump(mode="json") for item in status.unresolved_fields],
+            "approvals_required": [item.model_dump(mode="json") for item in status.approvals_required],
+        },
+        artifacts={"session_root": str((apply_state_root / job_id).resolve())},
+        text=f"apply status: job_id={job_id} status={status.session.status}",
+    )
+
+
+@apply_app.command("resume")
+def apply_resume(
+    job_id: str = typer.Option(...),
+    apply_state_root: Path = typer.Option(Path("state/apply_sessions")),
+    application_state_root: Path = typer.Option(Path("state/applications")),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    service = _apply_service(application_state_root, apply_state_root)
+    try:
+        status = service.resume_session(job_id=job_id)
+    except (FileNotFoundError, ValueError) as exc:
+        _emit_standard_envelope(json_out, "apply_resume", False, errors=[str(exc)], text=f"apply resume failed: {exc}")
+        raise typer.Exit(code=1)
+    _emit_standard_envelope(
+        json_out,
+        "apply_resume",
+        True,
+        summary=status.session.model_dump(mode="json"),
+        artifacts={"browser_request": str((apply_state_root / job_id / "openclaw" / "browser.request.json").resolve())},
+        text=f"apply resume queued: job_id={job_id} status={status.session.status}",
+    )
+
+
+@apply_app.command("approve")
+def apply_approve(
+    job_id: str = typer.Option(...),
+    action_id: str = typer.Option(..., "--action"),
+    apply_state_root: Path = typer.Option(Path("state/apply_sessions")),
+    application_state_root: Path = typer.Option(Path("state/applications")),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    service = _apply_service(application_state_root, apply_state_root)
+    try:
+        status = service.approve_action(job_id=job_id, action_id=action_id)
+    except (FileNotFoundError, ValueError) as exc:
+        _emit_standard_envelope(json_out, "apply_approve", False, errors=[str(exc)], text=f"apply approve failed: {exc}")
+        raise typer.Exit(code=1)
+    _emit_standard_envelope(
+        json_out,
+        "apply_approve",
+        True,
+        summary={
+            "job_id": job_id,
+            "action_id": action_id,
+            "status": status.session.status,
+            "approved_action_ids": status.session.approved_action_ids,
+        },
+        text=f"apply approve complete: job_id={job_id} action={action_id}",
+    )
+
+
+@apply_app.command("cancel")
+def apply_cancel(
+    job_id: str = typer.Option(...),
+    apply_state_root: Path = typer.Option(Path("state/apply_sessions")),
+    application_state_root: Path = typer.Option(Path("state/applications")),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    service = _apply_service(application_state_root, apply_state_root)
+    try:
+        status = service.cancel_session(job_id=job_id)
+    except (FileNotFoundError, ValueError) as exc:
+        _emit_standard_envelope(json_out, "apply_cancel", False, errors=[str(exc)], text=f"apply cancel failed: {exc}")
+        raise typer.Exit(code=1)
+    _emit_standard_envelope(
+        json_out,
+        "apply_cancel",
+        True,
+        summary=status.session.model_dump(mode="json"),
+        text=f"apply cancel complete: job_id={job_id}",
+    )
+
+
+@apply_app.command("report")
+def apply_report(
+    job_id: str = typer.Option(...),
+    apply_state_root: Path = typer.Option(Path("state/apply_sessions")),
+    application_state_root: Path = typer.Option(Path("state/applications")),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    service = _apply_service(application_state_root, apply_state_root)
+    try:
+        report = service.render_report(job_id=job_id)
+        status = service.get_status(job_id=job_id)
+    except (FileNotFoundError, ValueError) as exc:
+        _emit_standard_envelope(json_out, "apply_report", False, errors=[str(exc)], text=f"apply report failed: {exc}")
+        raise typer.Exit(code=1)
+    _emit_standard_envelope(
+        json_out,
+        "apply_report",
+        True,
+        summary={"job_id": job_id, "status": status.session.status, "report_markdown": report},
+        artifacts={"report_path": str((apply_state_root / job_id / "apply_report.md").resolve())},
+        text=None if json_out else report,
+    )
+
+
+@apply_app.command("list")
+def apply_list(
+    apply_state_root: Path = typer.Option(Path("state/apply_sessions")),
+    application_state_root: Path = typer.Option(Path("state/applications")),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    service = _apply_service(application_state_root, apply_state_root)
+    rows = service.list_sessions()
+    if json_out:
+        _emit_standard_envelope(
+            True,
+            "apply_list",
+            True,
+            summary={"rows": [item.model_dump(mode="json") for item in rows], "count": len(rows)},
+            artifacts={"apply_state_root": str(apply_state_root.resolve())},
+        )
+        return
+    for row in rows:
+        typer.echo(
+            f"{row.job_id}\t{row.mode}\t{row.status}\tpending={row.pending_approvals}\tunresolved={row.unresolved_fields}"
+        )
 
 
 @profile_app.command("import")

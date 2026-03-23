@@ -23,12 +23,14 @@ Detailed guardrails and adapter guidance live in `AGENTS.md` and `CONTRIBUTING.m
 - Sanitized review packet export/import
 - Deterministic digest send/resend
 - Bounded application drafting (draft only, never submission)
+- Browser-assisted apply sessions with guided and assisted modes (manual submit only)
 
 ## Explicitly out of scope
 
 - LinkedIn/Easy Apply automation
 - Browser automation as a default ingestion path
 - Auto-submit applications
+- Stored credentials or password-manager behavior
 - CAPTCHA solving / credential vault workflows
 - Multi-agent application automation
 - Web dashboard as primary ops path
@@ -201,6 +203,7 @@ Read-only inspection without opening YAML on disk:
 findmejobs profile show --json
 findmejobs ranking show --json
 findmejobs applications queue --json
+findmejobs apply list --json
 ```
 
 JSON responses use a stable envelope: `ok`, `command`, `summary`, `warnings`, `errors`, `artifacts`, `meta` (see `AGENTS.md`). `status --json` exits non-zero when `ok` is false.
@@ -295,12 +298,15 @@ What OpenClaw is allowed to do:
 - Run CLI commands and summarize results back in chat
 - Read sanitized review packet outputs
 - Generate bounded drafting artifacts (`prepare-application`, `draft-cover-letter`, `draft-answers`)
+- Drive guided or assisted browser apply sessions from app-owned artifacts only
 
 What OpenClaw must never do:
 
 - Act as the raw scraper/parser for job pages
 - Use raw HTML/raw payload dumps as review input
 - Change ranking to depend on LLM outputs
+- Auto-submit an application
+- Store credentials or log in with saved passwords
 
 Reference docs:
 
@@ -324,6 +330,7 @@ Top-level:
 - `findmejobs show-application`
 - `findmejobs validate-application`
 - `findmejobs regenerate-application`
+- `findmejobs apply list` / `apply open` / `apply status` / `apply resume` / `apply approve` / `apply report` / `apply cancel`
 - `findmejobs submissions list` / `submissions record` / `submissions update`
 
 Groups:
@@ -337,6 +344,7 @@ Groups:
 - `findmejobs feedback ...`
 - `findmejobs reprocess ...`
 - `findmejobs sources ...`
+- `findmejobs apply ...`
 
 Explore help:
 
@@ -376,6 +384,58 @@ findmejobs draft-applications --limit 100
 ```
 
 Artifacts are stored in `state/applications/<job_id>/`. This flow creates drafts only; it never submits applications.
+
+## Browser-assisted apply
+
+Apply sessions build on the prepared application packet and validated drafts. The browser layer is only the interaction shell. `findmejobs` stays the system of record.
+
+Modes:
+
+- `guided`: OpenClaw opens the target apply page, fills obvious fields from bounded data, and pauses before irreversible actions.
+- `assisted`: OpenClaw may continue across safe multi-step flows, but it must stop at approval gates and it still cannot submit.
+
+Core rules:
+
+- Final submit is never automatic.
+- Manual login is assumed when a site requires authentication.
+- The app may record a browser profile label, but it does not store credentials.
+- Raw page text does not mutate canonical profile or ranking data.
+- Browser automation does not replace ingestion.
+
+Commands:
+
+```bash
+findmejobs apply prepare --job-id <job_id> --json
+findmejobs apply open --job-id <job_id> --mode guided --json
+findmejobs apply open --job-id <job_id> --mode assisted --json
+findmejobs apply status --job-id <job_id> --json
+findmejobs apply approve --job-id <job_id> --action <action_id> --json
+findmejobs apply resume --job-id <job_id> --json
+findmejobs apply report --job-id <job_id> --json
+findmejobs apply list --json
+findmejobs apply cancel --job-id <job_id> --json
+```
+
+Approval gates are required before:
+
+- final submit
+- overwriting suspicious prefilled values
+- answering unknown or low-confidence questions
+- using fallback/generated answers when validated data is missing
+- uploading a file that is missing or not validated
+- continuing when form parsing confidence is low
+
+Runtime artifacts are stored in `state/apply_sessions/<job_id>/`:
+
+- `session.json`
+- `filled_fields.json`
+- `unresolved_fields.json`
+- `approvals_required.json`
+- `apply_report.md`
+- `openclaw/browser.request.json`
+- `events/*.json`
+
+Safe autofill is intentionally conservative. The browser request only includes app-owned values such as canonical name, email, phone, location, LinkedIn, GitHub, portfolio, validated resume path, validated cover letter text, validated short answers, and explicit per-session overrides.
 
 ## Deployment model
 

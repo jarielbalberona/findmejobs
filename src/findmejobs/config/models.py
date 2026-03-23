@@ -224,6 +224,8 @@ class ApplicationProfile(BaseModel):
     professional_summary: str | None = None
     key_achievements: list[str] = Field(default_factory=list)
     project_highlights: list[str] = Field(default_factory=list)
+    portfolio_url: str | None = None
+    resume_path: str | None = None
     salary_expectation: str | None = None
     notice_period: str | None = None
     current_availability: str | None = None

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from html import unescape
 
 from lxml import html
 
@@ -18,12 +19,18 @@ def collapse_whitespace(value: str) -> str:
 def html_to_text(value: str | None) -> str:
     if not value:
         return ""
+    normalized = value
+    for _ in range(3):
+        decoded = unescape(normalized)
+        if decoded == normalized:
+            break
+        normalized = decoded
     try:
-        root = html.fromstring(value)
+        root = html.fromstring(normalized)
         html.etree.strip_elements(root, "script", "style", with_tail=False)
         text = root.text_content()
     except (html.ParserError, ValueError):
-        text = value
+        text = normalized
     return collapse_whitespace(text)
 
 

@@ -7,6 +7,7 @@ import pytest
 from findmejobs.domain.source import SourceJobRecord
 from findmejobs.ingestion.adapters.rss import canonical_rss_key
 from findmejobs.normalization.canonicalize import normalize_job
+from findmejobs.review.packets import sanitize_review_text
 from findmejobs.utils.time import utcnow
 
 
@@ -103,6 +104,42 @@ def test_malformed_fields_are_handled_safely() -> None:
     assert job.posted_at is None
     assert job.salary_min is None
     assert job.salary_max is None
+
+
+def test_normalization_decodes_and_strips_escaped_html_markup() -> None:
+    record = SourceJobRecord(
+        source_job_key="escaped-html",
+        source_url="https://example.test/jobs/escaped-html",
+        apply_url="https://example.test/jobs/escaped-html",
+        title="Backend Engineer",
+        company="Example",
+        location_text="Remote, Philippines",
+        description_raw="&lt;p&gt;Python &lt;strong&gt;SQL&lt;/strong&gt; &amp; AWS&lt;/p&gt;",
+        raw_payload={},
+    )
+
+    job = normalize_job("source-job-id", "source-id", utcnow(), record)
+
+    assert job.description_text == "Python SQL & AWS"
+    assert sanitize_review_text(job.description_text) == "Python SQL & AWS"
+
+
+def test_normalization_removes_escaped_hostile_tags_before_review_boundary() -> None:
+    record = SourceJobRecord(
+        source_job_key="escaped-script",
+        source_url="https://example.test/jobs/escaped-script",
+        apply_url="https://example.test/jobs/escaped-script",
+        title="Backend Engineer",
+        company="Example",
+        location_text="Remote, Philippines",
+        description_raw="Plain text &lt;script&gt;bad&lt;/script&gt; Python SQL",
+        raw_payload={},
+    )
+
+    job = normalize_job("source-job-id", "source-id", utcnow(), record)
+
+    assert "script" not in job.description_text.casefold()
+    assert sanitize_review_text(job.description_text) == "Plain text Python SQL"
 
 
 @pytest.mark.parametrize(

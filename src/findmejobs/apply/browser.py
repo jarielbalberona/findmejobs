@@ -40,7 +40,7 @@ class BrowserBackend(Protocol):
     def fill(self, field: BrowserField, value: str) -> None: ...
     def upload(self, field: BrowserField, file_path: Path) -> None: ...
     def click_next(self, label: str | None = None) -> BrowserStepSnapshot: ...
-    def close(self) -> None: ...
+    def close(self, *, keep_open: bool = False) -> None: ...
 
 
 @dataclass(slots=True)
@@ -65,7 +65,13 @@ class ApplyBrowserRunner:
     def __init__(self, backend: BrowserBackend) -> None:
         self.backend = backend
 
-    def run(self, request: ApplyBrowserRequest, *, browser_profile_dir: Path | None = None) -> ApplyBrowserResult:
+    def run(
+        self,
+        request: ApplyBrowserRequest,
+        *,
+        browser_profile_dir: Path | None = None,
+        leave_open_for_review: bool = True,
+    ) -> ApplyBrowserResult:
         filled_fields: list[ApplyFieldAction] = []
         unresolved_fields: list[ApplyUnresolvedField] = list(request.unresolved_fields)
         requested_approvals: list[ApplyApprovalGate] = list(request.pending_approvals)
@@ -139,7 +145,7 @@ class ApplyBrowserRunner:
                 notes.append(f"Advanced safely via action: {snapshot.next_action_label}")
                 snapshot = self.backend.click_next(snapshot.next_action_label)
         finally:
-            self.backend.close()
+            self.backend.close(keep_open=leave_open_for_review)
 
     def _process_snapshot(
         self,
@@ -281,6 +287,8 @@ class ApplyBrowserRunner:
 
     def _analyze_field(self, field: BrowserField, candidate_map: dict[str, object]) -> _Analysis:
         normalized = collapse_label(field.label)
+        if self._is_browser_internal_field(field, normalized):
+            return _Analysis(category="ignore")
         if any(token in normalized for token in ("full name", "name")) and "company" not in normalized:
             return self._candidate("full_name", candidate_map)
         if "email" in normalized:
@@ -291,10 +299,31 @@ class ApplyBrowserRunner:
             return self._candidate("linkedin_url", candidate_map)
         if "github" in normalized:
             return self._candidate("github_url", candidate_map)
-        if any(token in normalized for token in ("portfolio", "website", "personal site")):
+        if any(token in normalized for token in ("portfolio", "personal site")):
             return self._candidate("portfolio_url", candidate_map)
+        if "website" in normalized and "github" not in normalized:
+            return _Analysis(
+                category="sensitive",
+                candidate_key="portfolio_url",
+                unresolved_reason="missing_portfolio_url",
+                unresolved_message="Website/portfolio input needs explicit operator review when the page label is ambiguous.",
+            )
+        if "country" in normalized:
+            return _Analysis(
+                category="sensitive",
+                candidate_key="country_selection",
+                unresolved_reason="missing_country_selection",
+                unresolved_message="Country selection must be reviewed explicitly for this application.",
+            )
         if any(token in normalized for token in ("location", "city", "current location")):
             return self._candidate("location_text", candidate_map)
+        if any(token in normalized for token in ("gdpr", "privacy policy", "data processing", "consent to processing")):
+            return _Analysis(
+                category="sensitive",
+                candidate_key="privacy_consent",
+                unresolved_reason="privacy_acknowledgement_required",
+                unresolved_message="Privacy/compliance acknowledgements require explicit operator review.",
+            )
         if any(token in normalized for token in ("cover letter",)) and field.field_type in {"textarea", "text"}:
             return self._candidate("cover_letter_text", candidate_map)
         if any(token in normalized for token in ("resume", "cv")) and field.field_type == "file":
@@ -345,6 +374,16 @@ class ApplyBrowserRunner:
                 unresolved_message="Unknown or low-confidence field requires operator review.",
             )
         return _Analysis(category="ignore")
+
+    def _is_browser_internal_field(self, field: BrowserField, normalized: str) -> bool:
+        field_id = field.field_id.casefold()
+        if "recaptcha" in field_id or "recaptcha" in normalized:
+            return True
+        if "captcha" in field_id or "captcha" in normalized:
+            return True
+        if field_id.startswith("g-recaptcha"):
+            return True
+        return False
 
     def _candidate(self, key: str, candidate_map: dict[str, object]) -> _Analysis:
         candidate = candidate_map.get(key)

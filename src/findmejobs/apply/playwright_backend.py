@@ -43,7 +43,9 @@ class PlaywrightBrowserBackend(BrowserBackend):
         self._page.wait_for_load_state("domcontentloaded")
         return self._snapshot("next", label)
 
-    def close(self) -> None:
+    def close(self, *, keep_open: bool = False) -> None:
+        if keep_open:
+            return
         if self._context is not None:
             self._context.close()
         if self._browser is not None:

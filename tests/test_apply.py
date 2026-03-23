@@ -261,8 +261,8 @@ class _FakeBrowserBackend:
         self.index += 1
         return self.snapshots[self.index]
 
-    def close(self) -> None:
-        self.closed = True
+    def close(self, *, keep_open: bool = False) -> None:
+        self.closed = not keep_open
 
 
 def test_guided_open_creates_session_and_blocks_submit(cli_runner, apply_runtime: dict[str, object]) -> None:
@@ -1163,6 +1163,7 @@ def test_browser_runner_guided_fills_safe_fields_and_stops_before_next_or_submit
     assert result.safe_to_continue is False
     assert result.submit_available is False
     assert backend.next_clicks == []
+    assert backend.closed is False
     assert {field_id for field_id, _ in backend.fills} == {"full_name", "email", "phone"}
 
 
@@ -1204,6 +1205,32 @@ def test_browser_runner_assisted_advances_across_safe_multi_step_flow(apply_runt
     assert result.step_id == "step-2"
     assert result.safe_to_continue is False
     assert {field_id for field_id, _ in backend.fills} == {"linkedin", "github"}
+
+
+def test_browser_runner_can_close_browser_when_requested(apply_runtime: dict[str, object]) -> None:
+    with apply_runtime["session_factory"]() as session:
+        job_id = _seed_apply_job(session, apply_runtime["profile"], seed_key="runner-close")
+    service = ApplySessionService(
+        application_state_root=apply_runtime["application_state_root"],
+        apply_state_root=apply_runtime["apply_state_root"],
+    )
+    _prepare_application(service, apply_runtime, job_id=job_id)
+    with apply_runtime["session_factory"]() as session:
+        service.open_session(session, apply_runtime["profile"], job_id=job_id, mode="guided")
+    request = FilesystemApplyOpenClawClient(apply_runtime["apply_state_root"] / job_id / "openclaw").load_browser_request()
+    backend = _FakeBrowserBackend(
+        [
+            BrowserStepSnapshot(
+                step_id="close-step",
+                step_label="Close test",
+                page_url=request.apply_url,
+                parse_confidence=0.95,
+                fields=[BrowserField(field_id="email", label="Email", field_type="email")],
+            )
+        ]
+    )
+    ApplyBrowserRunner(backend).run(request, leave_open_for_review=False)
+    assert backend.closed is True
 
 
 def test_browser_runner_blocks_conflicting_prefilled_value_with_approval_gate(apply_runtime: dict[str, object]) -> None:
@@ -1263,6 +1290,67 @@ def test_browser_runner_leaves_unknown_and_sensitive_questions_unresolved(apply_
     assert any(item.field_key == "salary_expectation" for item in result.unresolved_fields)
     assert any(item.reason_code == "unknown_question" for item in result.unresolved_fields)
     assert any(gate.gate_type == "unknown_question" for gate in result.requested_approvals)
+
+
+def test_browser_runner_ignores_captcha_and_treats_country_and_gdpr_as_sensitive(apply_runtime: dict[str, object]) -> None:
+    with apply_runtime["session_factory"]() as session:
+        job_id = _seed_apply_job(session, apply_runtime["profile"], seed_key="runner-captcha")
+    service = ApplySessionService(
+        application_state_root=apply_runtime["application_state_root"],
+        apply_state_root=apply_runtime["apply_state_root"],
+    )
+    _prepare_application(service, apply_runtime, job_id=job_id)
+    with apply_runtime["session_factory"]() as session:
+        service.open_session(session, apply_runtime["profile"], job_id=job_id, mode="assisted")
+    request = FilesystemApplyOpenClawClient(apply_runtime["apply_state_root"] / job_id / "openclaw").load_browser_request()
+    backend = _FakeBrowserBackend(
+        [
+            BrowserStepSnapshot(
+                step_id="safety-step",
+                step_label="Safety checks",
+                page_url=request.apply_url,
+                parse_confidence=0.89,
+                fields=[
+                    BrowserField(field_id="g-recaptcha-response", label="g-recaptcha-response", field_type="text"),
+                    BrowserField(field_id="country", label="Country", field_type="select"),
+                    BrowserField(field_id="gdpr", label="GDPR notification", field_type="checkbox"),
+                ],
+            )
+        ]
+    )
+    result = ApplyBrowserRunner(backend).run(request)
+    assert all(item.field_key != "g-recaptcha-response" for item in result.unresolved_fields)
+    assert all("recaptcha" not in gate.action_id for gate in result.requested_approvals)
+    assert any(item.reason_code == "missing_country_selection" for item in result.unresolved_fields)
+    assert any(item.reason_code == "privacy_acknowledgement_required" for item in result.unresolved_fields)
+
+
+def test_browser_runner_does_not_map_portfolio_to_github_field(apply_runtime: dict[str, object]) -> None:
+    with apply_runtime["session_factory"]() as session:
+        job_id = _seed_apply_job(session, apply_runtime["profile"], seed_key="runner-portfolio")
+    service = ApplySessionService(
+        application_state_root=apply_runtime["application_state_root"],
+        apply_state_root=apply_runtime["apply_state_root"],
+    )
+    _prepare_application(service, apply_runtime, job_id=job_id)
+    with apply_runtime["session_factory"]() as session:
+        service.open_session(session, apply_runtime["profile"], job_id=job_id, mode="assisted")
+    request = FilesystemApplyOpenClawClient(apply_runtime["apply_state_root"] / job_id / "openclaw").load_browser_request()
+    backend = _FakeBrowserBackend(
+        [
+            BrowserStepSnapshot(
+                step_id="portfolio-step",
+                step_label="Links",
+                page_url=request.apply_url,
+                parse_confidence=0.94,
+                fields=[BrowserField(field_id="website", label="Website", field_type="url")],
+            )
+        ]
+    )
+    result = ApplyBrowserRunner(backend).run(request)
+    assert backend.fills == []
+    assert any(item.reason_code == "missing_portfolio_url" for item in result.unresolved_fields)
+    assert all(action.field_key != "github_url" for action in result.filled_fields)
 
 
 def test_browser_runner_uploads_validated_resume_and_never_clicks_submit(apply_runtime: dict[str, object]) -> None:
@@ -1335,8 +1423,55 @@ def test_apply_browser_run_cli_writes_real_browser_result_with_mocked_backend(cl
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     _assert_envelope(payload, command="apply_browser_run")
+    assert payload["artifacts"]["browser_left_open"] is True
     browser_result = json.loads(
         (apply_runtime["apply_state_root"] / job_id / "openclaw" / "browser.result.json").read_text(encoding="utf-8")
     )
     assert browser_result["step_id"] == "cli-step"
     assert browser_result["filled_fields"][0]["field_key"] == "full_name"
+
+
+def test_manual_submit_does_not_override_pending_approvals_in_status(apply_runtime: dict[str, object]) -> None:
+    with apply_runtime["session_factory"]() as session:
+        job_id = _seed_apply_job(session, apply_runtime["profile"], seed_key="manual-vs-approval")
+    service = ApplySessionService(
+        application_state_root=apply_runtime["application_state_root"],
+        apply_state_root=apply_runtime["apply_state_root"],
+    )
+    _prepare_application(service, apply_runtime, job_id=job_id)
+    with apply_runtime["session_factory"]() as session:
+        service.open_session(session, apply_runtime["profile"], job_id=job_id, mode="assisted")
+    result_path = apply_runtime["apply_state_root"] / job_id / "openclaw" / "browser.result.json"
+    result_path.write_text(
+        ApplyBrowserResult(
+            event_id="evt-manual-plus-pending",
+            job_id=job_id,
+            step_id="step-review",
+            step_label="Review",
+            page_url="https://jobs.example.test/review",
+            parse_confidence=0.91,
+            safe_to_continue=False,
+            submit_available=True,
+            unresolved_fields=[
+                {
+                    "field_key": "work_authorization",
+                    "label": "Do you require a work visa?",
+                    "reason_code": "missing_work_authorization",
+                    "message": "Work authorization must come from explicit operator-owned data.",
+                }
+            ],
+            requested_approvals=[
+                {
+                    "action_id": "approve-visa",
+                    "gate_type": "unknown_question",
+                    "title": "Review visa question",
+                    "reason": "Operator input is still required.",
+                }
+            ],
+        ).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    status = service.get_status(job_id=job_id)
+    assert status.session.status == "awaiting_approval"
+    assert status.session.submit_available is True
+    assert any(gate.action_id == "final-submit-manual" for gate in status.approvals_required)

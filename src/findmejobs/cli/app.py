@@ -2391,6 +2391,7 @@ def apply_browser_run(
     apply_state_root: Path = typer.Option(Path("state/apply_sessions")),
     backend: str = typer.Option("playwright", "--backend"),
     browser_profile_dir: Path | None = typer.Option(None, "--browser-profile-dir", dir_okay=True, file_okay=False),
+    leave_open: bool = typer.Option(True, "--leave-open/--close-browser"),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
     if request_file is None and job_id is None:
@@ -2407,7 +2408,7 @@ def apply_browser_run(
         client = FilesystemApplyOpenClawClient(request_root)
         request = client.load_browser_request()
         runner = ApplyBrowserRunner(build_browser_backend(backend))
-        result = runner.run(request, browser_profile_dir=browser_profile_dir)
+        result = runner.run(request, browser_profile_dir=browser_profile_dir, leave_open_for_review=leave_open)
         client.export_browser_result(result)
     except Exception as exc:
         _emit_standard_envelope(json_out, "apply_browser_run", False, errors=[str(exc)], text=f"apply browser-run failed: {exc}")
@@ -2417,7 +2418,7 @@ def apply_browser_run(
         "apply_browser_run",
         True,
         summary=result.model_dump(mode="json"),
-        artifacts={"browser_result": str((request_root / "browser.result.json").resolve())},
+        artifacts={"browser_result": str((request_root / "browser.result.json").resolve()), "browser_left_open": leave_open},
         text=f"apply browser-run complete: job_id={request.job_id} step={result.step_label} submit_available={result.submit_available}",
     )
 

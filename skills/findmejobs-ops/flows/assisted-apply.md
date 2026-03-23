@@ -17,6 +17,7 @@ findmejobs apply report --job-id <job_id> --json
 ## Rules
 
 - Assisted mode may continue only when parse confidence is high and no non-submit approval gate is pending.
+- The browser runner leaves the browser open for manual review unless `--close-browser` is used.
 - Stop for approval before overwriting suspicious values, using fallbacks, answering unknown questions, or uploading missing/unvalidated files.
 - If `apply status` shows `submit_available: true`, stop. Submission is manual only.
 - Do not use page content to rewrite canonical profile, ranking config, or prepared application artifacts.

@@ -701,10 +701,10 @@ class ApplySessionService:
         return sorted(merged.values(), key=lambda item: item.action_id)
 
     def _derive_status(self, mode: str, result: ApplyBrowserResult, approvals_required: list[ApplyApprovalGate]) -> str:
-        if result.submit_available:
-            return "awaiting_manual_submit"
         if any(item.status == "pending" for item in approvals_required):
             return "awaiting_approval"
+        if result.submit_available:
+            return "awaiting_manual_submit"
         if result.safe_to_continue:
             return "ready_to_resume"
         return "ready_to_resume" if mode == "guided" else "in_progress"

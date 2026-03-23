@@ -455,9 +455,10 @@ findmejobs apply browser-run --job-id <job_id> --backend playwright --json
 Optional browser session routing:
 
 - `--browser-profile-dir /path/to/chromium-profile`
+- `--leave-open` (default) or `--close-browser`
 - `--request-file /path/to/browser.request.json`
 
-The browser runner opens the real apply page, fills only safe app-owned fields, may advance safe assisted steps, writes `browser.result.json`, and never clicks final submit.
+The browser runner opens the real apply page, fills only safe app-owned fields, leaves the browser open for manual review by default, may advance safe assisted steps, writes `browser.result.json`, and never clicks final submit.
 
 ## Deployment model
 

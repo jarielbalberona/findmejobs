@@ -16,5 +16,6 @@ findmejobs apply report --job-id <job_id> --json
 
 - Assume login is already handled manually in the browser session if the site requires it.
 - Guided mode is step-by-step. Do not infer permission to continue past risky or ambiguous states.
+- The browser runner leaves the browser open for manual review unless `--close-browser` is used.
 - Final submit is blocked by design. The operator reviews and clicks submit manually.
 - Unknown questions, conflicting prefilled values, and missing uploads stay unresolved until the operator decides.

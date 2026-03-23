@@ -1,0 +1,96 @@
+version: v1
+sources:
+  - name: openai-ashby
+    kind: ashby
+    enabled: true
+    priority: 20
+    trust_weight: 1.1
+    company_name: OpenAI
+    board_url: https://api.ashbyhq.com/posting-api/job-board/openai
+
+  - name: Ashby
+    kind: ashby
+    enabled: true
+    priority: 20
+    trust_weight: 1.1
+    company_name: Ashby
+    board_url: https://api.ashbyhq.com/posting-api/job-board/Ashby
+
+  - name: canonical-greenhouse
+    kind: greenhouse
+    enabled: true
+    priority: 20
+    trust_weight: 1.1
+    company_name: Canonical
+    board_token: canonical
+    include_content: true
+
+  - name: figma-greenhouse
+    kind: greenhouse
+    enabled: true
+    priority: 20
+    trust_weight: 1.1
+    company_name: Figma
+    board_token: figma
+    include_content: true
+
+  - name: stripe-greenhouse
+    kind: greenhouse
+    enabled: true
+    priority: 20
+    trust_weight: 1.1
+    company_name: Stripe
+    board_token: stripe
+    include_content: true
+
+  - name: nansen-greenhouse
+    kind: greenhouse
+    enabled: true
+    priority: 20
+    trust_weight: 1.1
+    company_name: Nansen
+    board_token: nansen
+    include_content: true
+
+  - name: plaid-lever
+    kind: lever
+    enabled: true
+    priority: 20
+    trust_weight: 1.1
+    company_name: Plaid
+    site: plaid
+
+  - name: dnb-lever
+    kind: lever
+    enabled: true
+    priority: 20
+    trust_weight: 1.1
+    company_name: Dun & Bradstreet
+    site: dnb
+
+  - name: viseven-smartrecruiters
+    kind: smartrecruiters
+    enabled: true
+    priority: 18
+    trust_weight: 1.0
+    company_name: Viseven
+    company_identifier: viseven
+    limit: 100
+
+  - name: smartrecruiters-inc
+    kind: smartrecruiters
+    enabled: true
+    priority: 20
+    trust_weight: 1.1
+    company_name: SmartRecruiters Inc
+    company_identifier: smartrecruiters
+    limit: 100
+
+  - name: automattic-workable
+    kind: workable
+    enabled: true
+    priority: 18
+    trust_weight: 1.0
+    account_subdomain: automattic
+    include_details: true
+    company_name: Automattic

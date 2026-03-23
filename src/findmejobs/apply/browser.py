@@ -22,6 +22,7 @@ class BrowserField:
     required: bool = False
     options: list[str] = field(default_factory=list)
     page: str | None = None
+    dom_index: int | None = None
 
 
 @dataclass(slots=True)
@@ -166,8 +167,9 @@ class ApplyBrowserRunner:
         filled_fields: list[ApplyFieldAction] = []
         unresolved_fields: list[ApplyUnresolvedField] = []
         approvals: list[ApplyApprovalGate] = []
+        prompt_candidate_map = self._build_prompt_candidate_map(candidate_map)
         for field in snapshot.fields:
-            analysis = self._analyze_field(field, candidate_map)
+            analysis = self._analyze_field(field, candidate_map, prompt_candidate_map)
             if analysis.category == "safe" and analysis.candidate_value is not None and analysis.candidate_key is not None:
                 if field.value and field.value.strip() and field.value.strip() != analysis.candidate_value.strip():
                     approvals.append(
@@ -296,7 +298,12 @@ class ApplyBrowserRunner:
                 )
         return filled_fields, unresolved_fields, approvals
 
-    def _analyze_field(self, field: BrowserField, candidate_map: dict[str, object]) -> _Analysis:
+    def _analyze_field(
+        self,
+        field: BrowserField,
+        candidate_map: dict[str, object],
+        prompt_candidate_map: dict[str, object],
+    ) -> _Analysis:
         normalized = collapse_label(field.label)
         if self._is_browser_internal_field(field, normalized):
             return _Analysis(category="ignore")
@@ -310,6 +317,8 @@ class ApplyBrowserRunner:
             return self._candidate("linkedin_url", candidate_map)
         if "github" in normalized:
             return self._candidate("github_url", candidate_map)
+        if any(token in normalized for token in ("cover letter", "coverletter")) and field.field_type == "file":
+            return self._candidate("cover_letter_file", candidate_map)
         if any(token in normalized for token in ("portfolio", "personal site")):
             return self._candidate("portfolio_url", candidate_map)
         if "website" in normalized and "github" not in normalized:
@@ -329,6 +338,9 @@ class ApplyBrowserRunner:
         if any(token in normalized for token in ("location", "city", "current location")):
             return self._candidate("location_text", candidate_map)
         if any(token in normalized for token in ("gdpr", "privacy policy", "data processing", "consent to processing")):
+            candidate = self._candidate("privacy_consent", candidate_map)
+            if candidate.category == "safe":
+                return candidate
             return _Analysis(
                 category="sensitive",
                 candidate_key="privacy_consent",
@@ -358,6 +370,9 @@ class ApplyBrowserRunner:
                 unresolved_message="Notice period must come from explicit operator-owned data.",
             )
         if any(token in normalized for token in ("work authorization", "authorized to work", "visa")):
+            candidate = self._candidate("work_authorization", candidate_map)
+            if candidate.category == "safe":
+                return candidate
             return _Analysis(
                 category="sensitive",
                 candidate_key="work_authorization",
@@ -377,6 +392,13 @@ class ApplyBrowserRunner:
                 candidate_key="work_hours",
                 unresolved_reason="missing_timezone_availability",
                 unresolved_message="Timezone/work-hours availability must come from explicit operator-owned data.",
+            )
+        prompt_candidate = prompt_candidate_map.get(normalize_prompt(field.label))
+        if prompt_candidate is not None:
+            return _Analysis(
+                category="safe",
+                candidate_key=prompt_candidate.key,
+                candidate_value=getattr(prompt_candidate, "value"),
             )
         if field.field_type in {"textarea", "text", "select", "radio", "checkbox"}:
             return _Analysis(
@@ -402,6 +424,21 @@ class ApplyBrowserRunner:
             return _Analysis(category="sensitive", candidate_key=key, unresolved_message="Required app-owned input is missing.")
         return _Analysis(category="safe", candidate_key=key, candidate_value=getattr(candidate, "value"))
 
+    def _build_prompt_candidate_map(self, candidate_map: dict[str, object]) -> dict[str, object]:
+        prompt_candidates: dict[str, object] = {}
+        for candidate in candidate_map.values():
+            key = getattr(candidate, "key", "")
+            source = getattr(candidate, "source", "")
+            label = getattr(candidate, "label", "")
+            if source != "validated_answers":
+                continue
+            if not key.startswith("answer_prompt:"):
+                continue
+            normalized_prompt = normalize_prompt(label)
+            if normalized_prompt:
+                prompt_candidates[normalized_prompt] = candidate
+        return prompt_candidates
+
     def _merge_unresolved(self, existing: list[ApplyUnresolvedField], updates: list[ApplyUnresolvedField]) -> list[ApplyUnresolvedField]:
         merged = {(item.field_key, item.reason_code): item for item in existing}
         for item in updates:
@@ -420,3 +457,8 @@ class ApplyBrowserRunner:
 
 def collapse_label(value: str) -> str:
     return " ".join(value.casefold().strip().split())
+
+
+def normalize_prompt(value: str) -> str:
+    collapsed = collapse_label(value)
+    return re.sub(r"[^a-z0-9]+", " ", collapsed).strip()

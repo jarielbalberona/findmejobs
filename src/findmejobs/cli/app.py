@@ -2088,6 +2088,7 @@ def apply_open(
     mode: str = typer.Option(..., "--mode"),
     browser_profile: str | None = typer.Option(None, "--browser-profile"),
     overrides_file: Path | None = typer.Option(None, "--overrides-file", exists=True, dir_okay=False),
+    resume_path: Path | None = typer.Option(None, "--resume-path", exists=True, dir_okay=False),
     app_config_path: Path = typer.Option(Path("config/app.toml"), exists=True),
     profile_path: Path = typer.Option(Path("config/profile.yaml")),
     sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
@@ -2106,6 +2107,8 @@ def apply_open(
         with session_factory() as session:
             try:
                 overrides = service.load_overrides_file(overrides_file)
+                if resume_path is not None:
+                    overrides["resume_file"] = str(resume_path.expanduser().resolve())
                 result = service.open_session(
                     session,
                     profile,

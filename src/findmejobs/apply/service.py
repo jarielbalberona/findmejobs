@@ -51,6 +51,15 @@ SAFE_PROFILE_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("github_url", "GitHub", "url"),
 )
 SAFE_APPLICATION_FIELDS: tuple[tuple[str, str], ...] = (("portfolio_url", "Portfolio"),)
+EXPLICIT_APPLICATION_FIELDS: tuple[tuple[str, str], ...] = (
+    ("salary_expectation", "Salary expectation"),
+    ("notice_period", "Notice period"),
+    ("current_availability", "Current availability"),
+    ("remote_preference", "Remote preference"),
+    ("relocation_preference", "Relocation preference"),
+    ("work_authorization", "Work authorization"),
+    ("work_hours", "Work hours"),
+)
 RISKY_APPLICATION_KEYS = {
     "salary_expectation",
     "notice_period",
@@ -61,6 +70,7 @@ RISKY_APPLICATION_KEYS = {
     "remote_preference",
 }
 SAFE_ANSWER_KEYS = {"fit", "motivation"}
+COVER_LETTER_UPLOAD_FILENAME = "cover_letter.upload.txt"
 
 
 @dataclass(slots=True)
@@ -120,6 +130,7 @@ class ApplySessionService:
             cover_letter_text=cover_letter_text,
             answers=answers,
             overrides=overrides,
+            job_id=job_id,
         )
         session_model = ApplySessionModel(
             job_id=job_id,
@@ -407,6 +418,7 @@ class ApplySessionService:
         cover_letter_text: str | None,
         answers: AnswerDraftSetModel | None,
         overrides: dict[str, str],
+        job_id: str,
     ) -> list[ApplyInputCandidate]:
         candidates: list[ApplyInputCandidate] = []
         for key, label, value_type in SAFE_PROFILE_FIELDS:
@@ -433,6 +445,18 @@ class ApplySessionService:
                         source="canonical_profile",
                     )
                 )
+        for key, label in EXPLICIT_APPLICATION_FIELDS:
+            value = getattr(profile.application, key)
+            if value:
+                candidates.append(
+                    ApplyInputCandidate(
+                        key=key,
+                        label=label,
+                        value=str(value),
+                        value_type="text",
+                        source="canonical_profile",
+                    )
+                )
         if cover_letter_text:
             candidates.append(
                 ApplyInputCandidate(
@@ -441,6 +465,17 @@ class ApplySessionService:
                     value=cover_letter_text.strip(),
                     value_type="textarea",
                     source="validated_cover_letter",
+                )
+            )
+            cover_letter_upload_path = self._ensure_cover_letter_upload_artifact(job_id=job_id, cover_letter_text=cover_letter_text)
+            candidates.append(
+                ApplyInputCandidate(
+                    key="cover_letter_file",
+                    label="Cover letter file",
+                    value=str(cover_letter_upload_path),
+                    value_type="file",
+                    source="validated_cover_letter",
+                    notes="Upload only when the application explicitly requests a cover letter file.",
                 )
             )
         resume_path = profile.application.resume_path
@@ -459,18 +494,32 @@ class ApplySessionService:
                 )
         if answers is not None:
             for answer in answers.answers:
-                if answer.needs_user_input or answer.normalized_key not in SAFE_ANSWER_KEYS:
+                if answer.needs_user_input:
                     continue
-                answer_key = answer.normalized_key
-                candidates.append(
-                    ApplyInputCandidate(
-                        key=f"answer:{answer_key}",
-                        label=answer.question,
-                        value=answer.answer,
-                        value_type="textarea" if len(answer.answer) > 100 else "text",
-                        source="validated_answers",
+                answer_key = self._answer_candidate_key(answer)
+                if answer_key is None:
+                    answer_key = ""
+                if answer_key:
+                    candidates.append(
+                        ApplyInputCandidate(
+                            key=answer_key,
+                            label=answer.question,
+                            value=answer.answer,
+                            value_type="textarea" if len(answer.answer) > 100 else "text",
+                            source="validated_answers",
+                        )
                     )
-                )
+                normalized_prompt = self._normalized_prompt(answer.question)
+                if normalized_prompt and self._should_export_prompt_candidate(answer, answers.origin):
+                    candidates.append(
+                        ApplyInputCandidate(
+                            key=f"answer_prompt:{normalized_prompt}",
+                            label=answer.question,
+                            value=answer.answer,
+                            value_type="textarea" if len(answer.answer) > 100 else "text",
+                            source="validated_answers",
+                        )
+                    )
         for key in RISKY_APPLICATION_KEYS:
             _ = getattr(profile.application, key, None)
         for key, value in overrides.items():
@@ -486,6 +535,43 @@ class ApplySessionService:
                 )
             )
         return sorted(candidates, key=lambda item: item.key)
+
+    def _answer_candidate_key(self, answer) -> str | None:
+        normalized_key = answer.normalized_key
+        if normalized_key == "fit":
+            return "answer:fit"
+        if normalized_key == "motivation":
+            return "answer:motivation"
+        if normalized_key == "expected_salary":
+            return "salary_expectation"
+        if normalized_key == "notice_period":
+            return "notice_period"
+        if normalized_key == "current_availability":
+            return "current_availability"
+        if normalized_key == "relocation_preference":
+            return "relocation_preference"
+        if normalized_key == "work_authorization":
+            return "work_authorization"
+        if normalized_key == "work_hours":
+            return "work_hours"
+        if normalized_key == "remote_preference":
+            return "remote_preference"
+        return None
+
+    def _should_export_prompt_candidate(self, answer, origin: str) -> bool:
+        if origin == "openclaw":
+            return True
+        return answer.normalized_key in SAFE_ANSWER_KEYS
+
+    def _normalized_prompt(self, value: str) -> str:
+        collapsed = " ".join(value.casefold().strip().split())
+        return "".join(char if char.isalnum() else " " for char in collapsed).strip()
+
+    def _ensure_cover_letter_upload_artifact(self, *, job_id: str, cover_letter_text: str) -> Path:
+        target = self.application_state_root / job_id / COVER_LETTER_UPLOAD_FILENAME
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(cover_letter_text.strip() + "\n", encoding="utf-8")
+        return target.resolve()
 
     def _paths(self, job_id: str) -> ApplyPaths:
         root = self.apply_state_root / job_id

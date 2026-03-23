@@ -809,7 +809,12 @@ class ApplicationDraftService:
             return "remote_preference", "text"
         if "why are you a fit" in lowered or "why should we hire" in lowered or "fit for this role" in lowered:
             return "fit", "text"
-        if "why do you want" in lowered or "why this role" in lowered or "why are you interested" in lowered:
+        if (
+            "why do you want" in lowered
+            or "why this role" in lowered
+            or "why are you interested" in lowered
+            or "what interests you about" in lowered
+        ):
             return "motivation", "text"
         if "project" in lowered or "experience" in lowered:
             return "project_experience", "text"

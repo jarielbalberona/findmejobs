@@ -67,6 +67,12 @@ class PlaywrightBrowserBackend(BrowserBackend):
 
     def fill(self, field: BrowserField, value: str) -> None:
         locator = self._locator_for_field(field)
+        if field.field_type == "select":
+            self._select_option(locator, field, value)
+            return
+        if field.field_type == "checkbox":
+            self._set_checkbox(locator, value)
+            return
         locator.fill(value)
 
     def upload(self, field: BrowserField, file_path: Path) -> None:
@@ -173,18 +179,57 @@ class PlaywrightBrowserBackend(BrowserBackend):
         raw_type = (handle.get_attribute("type") or tag_name or "unknown").casefold()
         field_type = raw_type if raw_type in {"text", "email", "tel", "url", "textarea", "select", "checkbox", "radio", "file"} else "unknown"
         field_id = handle.get_attribute("name") or handle.get_attribute("id") or f"field-{index}"
-        label = (
-            handle.get_attribute("aria-label")
-            or handle.get_attribute("placeholder")
-            or self._label_for(handle.get_attribute("id"))
-            or field_id
-        )
+        label = self._extract_label(handle, field_id)
         value = handle.input_value() if tag_name in {"input", "textarea", "select"} else None
         required = bool(handle.get_attribute("required"))
         options = []
         if tag_name == "select":
             options = [opt.inner_text().strip() for opt in handle.locator("option").all()]
-        return BrowserField(field_id=field_id, label=label, field_type=field_type, value=value, required=required, options=options)
+        return BrowserField(
+            field_id=field_id,
+            label=label,
+            field_type=field_type,
+            value=value,
+            required=required,
+            options=options,
+            dom_index=index,
+        )
+
+    def _extract_label(self, handle, field_id: str) -> str:
+        label = (
+            handle.get_attribute("aria-label")
+            or handle.get_attribute("placeholder")
+            or self._label_for(handle.get_attribute("id"))
+        )
+        if label:
+            return label
+        context_text = handle.evaluate(
+            """(el) => {
+                const normalize = (value) => String(value || "").replace(/\\s+/g, " ").trim();
+                const candidates = [];
+                if (el.labels) {
+                    for (const item of Array.from(el.labels)) {
+                        const text = normalize(item.innerText || item.textContent);
+                        if (text) candidates.push(text);
+                    }
+                }
+                let node = el.parentElement;
+                while (node) {
+                    const text = normalize(node.innerText || node.textContent);
+                    if (text && text.length <= 240) {
+                        candidates.push(text);
+                        break;
+                    }
+                    node = node.parentElement;
+                }
+                return candidates;
+            }"""
+        )
+        if isinstance(context_text, list):
+            for item in context_text:
+                if isinstance(item, str) and item.strip():
+                    return item.strip()
+        return field_id
 
     def _label_for(self, element_id: str | None) -> str | None:
         if not element_id:
@@ -196,9 +241,30 @@ class PlaywrightBrowserBackend(BrowserBackend):
 
     def _locator_for_field(self, field: BrowserField):
         locator = self._page.locator(f"[name='{field.field_id}'], #{field.field_id}").first
+        if locator.count() == 0 and field.dom_index is not None:
+            locator = self._page.locator("input, textarea, select").nth(field.dom_index)
         if locator.count() == 0:
             raise RuntimeError(f"browser_field_not_found:{field.field_id}")
         return locator
+
+    def _select_option(self, locator, field: BrowserField, value: str) -> None:
+        normalized_value = _normalize_option_text(value)
+        for option in field.options:
+            normalized_option = _normalize_option_text(option)
+            if not normalized_option or normalized_option in {"select", "select option"}:
+                continue
+            if normalized_option == normalized_value or normalized_option in normalized_value or normalized_value in normalized_option:
+                locator.select_option(label=option)
+                return
+        locator.select_option(label=value)
+
+    def _set_checkbox(self, locator, value: str) -> None:
+        truthy = {"yes", "true", "1", "agree", "accepted", "accept"}
+        should_check = _normalize_option_text(value) in truthy
+        if should_check:
+            locator.check()
+        else:
+            locator.uncheck()
 
     def _next_button(self, label: str | None):
         if label:
@@ -334,3 +400,7 @@ def _wait_for_browser_page(context, target_url: str, timeout_seconds: float = 10
     if not (page.url or "").strip() or page.url == "about:blank":
         page.goto(target_url, wait_until="domcontentloaded")
     return page
+
+
+def _normalize_option_text(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(value or "").casefold()).strip()

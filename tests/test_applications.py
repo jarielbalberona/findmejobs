@@ -791,6 +791,23 @@ def test_answer_drafting_handles_common_question_types_and_flags_missing_inputs(
     assert len(by_key["fit"].answer.split()) < 50
 
 
+def test_answer_drafting_treats_company_interest_prompt_as_motivation(application_runtime: dict[str, object]) -> None:
+    session_factory = application_runtime["session_factory"]
+    state_root = application_runtime["state_root"]
+    profile = application_runtime["profile"]
+    service = ApplicationDraftService(state_root=state_root)
+    questions = ["What interests you about Nansen?"]
+    with session_factory() as session:
+        job_id = _seed_application_job(session, profile, description_text="Python SQL AWS APIs", questions=questions)
+    with session_factory() as session:
+        draft = service.draft_answers(session, profile, job_id=job_id)
+
+    answer = draft.answers[0]
+    assert answer.normalized_key == "motivation"
+    assert answer.needs_user_input is False
+    assert "role" in answer.answer.casefold() or "interested" in answer.answer.casefold()
+
+
 def test_invalid_structured_question_file_fails_clearly(
     cli_runner,
     application_runtime: dict[str, object],

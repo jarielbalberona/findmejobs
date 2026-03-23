@@ -320,7 +320,7 @@ def test_guided_open_creates_session_and_blocks_submit(cli_runner, apply_runtime
     assert request["allow_submit"] is False
     assert "Do not submit the application" in " ".join(request["instructions"])
     candidate_keys = {item["key"] for item in request["candidate_inputs"]}
-    assert {"full_name", "email", "phone", "location_text", "linkedin_url", "github_url", "portfolio_url", "resume_file"} <= candidate_keys
+    assert {"full_name", "email", "phone", "location_text", "linkedin_url", "github_url", "portfolio_url", "resume_file", "cover_letter_file"} <= candidate_keys
     for name in (
         "session.json",
         "filled_fields.json",
@@ -330,6 +330,51 @@ def test_guided_open_creates_session_and_blocks_submit(cli_runner, apply_runtime
         "summary.json",
     ):
         assert (apply_runtime["apply_state_root"] / job_id / name).exists()
+
+
+def test_apply_open_uses_resume_path_override(cli_runner, apply_runtime: dict[str, object], tmp_path: Path) -> None:
+    with apply_runtime["session_factory"]() as session:
+        job_id = _seed_apply_job(session, apply_runtime["profile"], seed_key="guided-resume-override")
+    service = ApplySessionService(
+        application_state_root=apply_runtime["application_state_root"],
+        apply_state_root=apply_runtime["apply_state_root"],
+    )
+    _prepare_application(service, apply_runtime, job_id=job_id)
+    override_resume = tmp_path / "override-resume.pdf"
+    override_resume.write_text("override resume", encoding="utf-8")
+    result = cli_runner.invoke(
+        app,
+        [
+            "apply",
+            "open",
+            "--job-id",
+            job_id,
+            "--mode",
+            "guided",
+            "--resume-path",
+            str(override_resume),
+            "--app-config-path",
+            str(apply_runtime["app_path"]),
+            "--profile-path",
+            str(apply_runtime["profile_path"]),
+            "--sources-dir",
+            str(apply_runtime["sources_dir"]),
+            "--application-state-root",
+            str(apply_runtime["application_state_root"]),
+            "--apply-state-root",
+            str(apply_runtime["apply_state_root"]),
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    _assert_envelope(payload, command="apply_open")
+    request = json.loads(
+        (apply_runtime["apply_state_root"] / job_id / "openclaw" / "browser.request.json").read_text(encoding="utf-8")
+    )
+    resume_candidate = next(item for item in request["candidate_inputs"] if item["key"] == "resume_file")
+    assert resume_candidate["value"] == str(override_resume.resolve())
+    assert request["session_overrides"]["resume_file"] == str(override_resume.resolve())
 
 
 def test_assisted_open_then_status_imports_browser_result_and_requires_manual_submit(apply_runtime: dict[str, object]) -> None:
@@ -1437,6 +1482,201 @@ def test_browser_runner_ignores_captcha_and_treats_country_and_gdpr_as_sensitive
     assert all(item.field_key != "g-recaptcha-response" for item in result.unresolved_fields)
     assert all("recaptcha" not in gate.action_id for gate in result.requested_approvals)
     assert any(item.reason_code == "missing_country_selection" for item in result.unresolved_fields)
+    assert any(item.reason_code == "privacy_acknowledgement_required" for item in result.unresolved_fields)
+
+
+def test_browser_runner_uploads_resume_for_custom_hidden_file_field_label(apply_runtime: dict[str, object]) -> None:
+    with apply_runtime["session_factory"]() as session:
+        job_id = _seed_apply_job(session, apply_runtime["profile"], seed_key="runner-resume-custom")
+    service = ApplySessionService(
+        application_state_root=apply_runtime["application_state_root"],
+        apply_state_root=apply_runtime["apply_state_root"],
+    )
+    _prepare_application(service, apply_runtime, job_id=job_id)
+    with apply_runtime["session_factory"]() as session:
+        service.open_session(session, apply_runtime["profile"], job_id=job_id, mode="assisted")
+    request = FilesystemApplyOpenClawClient(apply_runtime["apply_state_root"] / job_id / "openclaw").load_browser_request()
+    backend = _FakeBrowserBackend(
+        [
+            BrowserStepSnapshot(
+                step_id="resume-custom-step",
+                step_label="Resume",
+                page_url=request.apply_url,
+                parse_confidence=0.94,
+                fields=[
+                    BrowserField(
+                        field_id="field-0",
+                        label="Resume/CV Attach Dropbox Google Drive Enter manually Accepted file types pdf doc docx txt rtf",
+                        field_type="file",
+                        dom_index=0,
+                    )
+                ],
+            )
+        ]
+    )
+    result = ApplyBrowserRunner(backend).run(request)
+    assert len(backend.uploads) == 1
+    assert backend.uploads[0][0] == "field-0"
+    assert backend.uploads[0][1].endswith("resume.pdf")
+    assert any(action.field_key == "resume_file" for action in result.filled_fields)
+
+
+def test_browser_runner_uploads_cover_letter_file_when_form_requests_file(apply_runtime: dict[str, object]) -> None:
+    with apply_runtime["session_factory"]() as session:
+        job_id = _seed_apply_job(session, apply_runtime["profile"], seed_key="runner-cover-upload")
+    service = ApplySessionService(
+        application_state_root=apply_runtime["application_state_root"],
+        apply_state_root=apply_runtime["apply_state_root"],
+    )
+    _prepare_application(service, apply_runtime, job_id=job_id)
+    with apply_runtime["session_factory"]() as session:
+        service.open_session(session, apply_runtime["profile"], job_id=job_id, mode="assisted")
+    request = FilesystemApplyOpenClawClient(apply_runtime["apply_state_root"] / job_id / "openclaw").load_browser_request()
+    backend = _FakeBrowserBackend(
+        [
+            BrowserStepSnapshot(
+                step_id="cover-upload-step",
+                step_label="Cover letter",
+                page_url=request.apply_url,
+                parse_confidence=0.95,
+                fields=[BrowserField(field_id="cover-upload", label="Cover Letter", field_type="file")],
+            )
+        ]
+    )
+    result = ApplyBrowserRunner(backend).run(request)
+    assert len(backend.uploads) == 1
+    assert backend.uploads[0][0] == "cover-upload"
+    assert backend.uploads[0][1].endswith("cover_letter.upload.txt")
+    assert any(action.field_key == "cover_letter_file" for action in result.filled_fields)
+
+
+def test_browser_runner_matches_validated_answer_by_exact_question_prompt(apply_runtime: dict[str, object]) -> None:
+    questions = ["What interests you about Nansen?"]
+    with apply_runtime["session_factory"]() as session:
+        job_id = _seed_apply_job(session, apply_runtime["profile"], seed_key="runner-answer-prompt", questions=questions)
+    service = ApplySessionService(
+        application_state_root=apply_runtime["application_state_root"],
+        apply_state_root=apply_runtime["apply_state_root"],
+    )
+    _prepare_application(service, apply_runtime, job_id=job_id)
+    with apply_runtime["session_factory"]() as session:
+        service.open_session(session, apply_runtime["profile"], job_id=job_id, mode="assisted")
+    request = FilesystemApplyOpenClawClient(apply_runtime["apply_state_root"] / job_id / "openclaw").load_browser_request()
+    backend = _FakeBrowserBackend(
+        [
+            BrowserStepSnapshot(
+                step_id="answer-prompt-step",
+                step_label="Questions",
+                page_url=request.apply_url,
+                parse_confidence=0.95,
+                fields=[BrowserField(field_id="motivation", label="What interests you about Nansen?*", field_type="textarea")],
+            )
+        ]
+    )
+    result = ApplyBrowserRunner(backend).run(request)
+    assert len(backend.fills) == 1
+    assert backend.fills[0][0] == "motivation"
+    assert "nansen" in backend.fills[0][1].casefold() or "role" in backend.fills[0][1].casefold()
+    assert any(action.field_key.startswith("answer_prompt:") for action in result.filled_fields)
+
+
+def test_browser_runner_fills_work_visa_select_only_when_explicit_value_exists(apply_runtime: dict[str, object]) -> None:
+    _rewrite_profile_field(
+        apply_runtime["profile_path"],
+        'portfolio_url = "https://portfolio.example.test/jane"',
+        '\n'.join(
+            [
+                'portfolio_url = "https://portfolio.example.test/jane"',
+                'work_authorization = "No"',
+            ]
+        ),
+    )
+    profile = load_profile_config(apply_runtime["profile_path"])
+    apply_runtime["profile"] = profile
+    questions = ["Do you require a work visa?"]
+    with apply_runtime["session_factory"]() as session:
+        job_id = _seed_apply_job(session, profile, seed_key="runner-visa-explicit", questions=questions)
+    service = ApplySessionService(
+        application_state_root=apply_runtime["application_state_root"],
+        apply_state_root=apply_runtime["apply_state_root"],
+    )
+    _prepare_application(service, apply_runtime, job_id=job_id)
+    with apply_runtime["session_factory"]() as session:
+        service.open_session(session, profile, job_id=job_id, mode="assisted")
+    request = FilesystemApplyOpenClawClient(apply_runtime["apply_state_root"] / job_id / "openclaw").load_browser_request()
+    backend = _FakeBrowserBackend(
+        [
+            BrowserStepSnapshot(
+                step_id="visa-select-step",
+                step_label="Visa",
+                page_url=request.apply_url,
+                parse_confidence=0.95,
+                fields=[BrowserField(field_id="work_visa", label="Do you require a work visa?*", field_type="select", options=["Select...", "Yes", "No"])],
+            )
+        ]
+    )
+    result = ApplyBrowserRunner(backend).run(request)
+    assert backend.fills == [("work_visa", "No")]
+    assert any(action.field_key == "work_authorization" for action in result.filled_fields)
+
+
+def test_browser_runner_fills_privacy_select_only_from_explicit_override(apply_runtime: dict[str, object]) -> None:
+    with apply_runtime["session_factory"]() as session:
+        job_id = _seed_apply_job(session, apply_runtime["profile"], seed_key="runner-privacy-explicit")
+    service = ApplySessionService(
+        application_state_root=apply_runtime["application_state_root"],
+        apply_state_root=apply_runtime["apply_state_root"],
+    )
+    _prepare_application(service, apply_runtime, job_id=job_id)
+    with apply_runtime["session_factory"]() as session:
+        service.open_session(
+            session,
+            apply_runtime["profile"],
+            job_id=job_id,
+            mode="assisted",
+            overrides={"privacy_consent": "I Agree"},
+        )
+    request = FilesystemApplyOpenClawClient(apply_runtime["apply_state_root"] / job_id / "openclaw").load_browser_request()
+    backend = _FakeBrowserBackend(
+        [
+            BrowserStepSnapshot(
+                step_id="privacy-select-step",
+                step_label="Privacy",
+                page_url=request.apply_url,
+                parse_confidence=0.95,
+                fields=[BrowserField(field_id="gdpr-select", label="GDPR notification *", field_type="select", options=["Select...", "I Agree", "I Do Not Agree"])],
+            )
+        ]
+    )
+    result = ApplyBrowserRunner(backend).run(request)
+    assert backend.fills == [("gdpr-select", "I Agree")]
+    assert any(action.field_key == "privacy_consent" for action in result.filled_fields)
+
+
+def test_browser_runner_leaves_privacy_select_unresolved_without_explicit_value(apply_runtime: dict[str, object]) -> None:
+    with apply_runtime["session_factory"]() as session:
+        job_id = _seed_apply_job(session, apply_runtime["profile"], seed_key="runner-privacy-missing")
+    service = ApplySessionService(
+        application_state_root=apply_runtime["application_state_root"],
+        apply_state_root=apply_runtime["apply_state_root"],
+    )
+    _prepare_application(service, apply_runtime, job_id=job_id)
+    with apply_runtime["session_factory"]() as session:
+        service.open_session(session, apply_runtime["profile"], job_id=job_id, mode="assisted")
+    request = FilesystemApplyOpenClawClient(apply_runtime["apply_state_root"] / job_id / "openclaw").load_browser_request()
+    backend = _FakeBrowserBackend(
+        [
+            BrowserStepSnapshot(
+                step_id="privacy-select-missing-step",
+                step_label="Privacy",
+                page_url=request.apply_url,
+                parse_confidence=0.95,
+                fields=[BrowserField(field_id="gdpr-select", label="GDPR notification *", field_type="select", options=["Select...", "I Agree", "I Do Not Agree"])],
+            )
+        ]
+    )
+    result = ApplyBrowserRunner(backend).run(request)
+    assert backend.fills == []
     assert any(item.reason_code == "privacy_acknowledgement_required" for item in result.unresolved_fields)
 
 

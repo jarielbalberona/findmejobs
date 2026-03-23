@@ -7,6 +7,8 @@ CLI_BIN="${FINDMEJOBS_BIN:-$ROOT_DIR/.venv/bin/findmejobs}"
 APP_CONFIG_PATH="${FINDMEJOBS_APP_CONFIG_PATH:-config/app.toml}"
 PROFILE_PATH="${FINDMEJOBS_PROFILE_PATH:-config/profile.yaml}"
 SOURCES_PATH="${FINDMEJOBS_SOURCES_PATH:-config/sources.yaml}"
+APPLICATION_STATE_ROOT="${FINDMEJOBS_APPLICATION_STATE_ROOT:-$ROOT_DIR/state/applications}"
+APPLY_STATE_ROOT="${FINDMEJOBS_APPLY_STATE_ROOT:-$ROOT_DIR/state/apply_sessions}"
 
 if [[ ! -x "$CLI_BIN" ]]; then
   echo "error: findmejobs CLI not executable at $CLI_BIN" >&2
@@ -47,8 +49,11 @@ run_json_command "sources" "$CLI_BIN" sources list --json --sources-path "$SOURC
 run_json_command "jobs" "$CLI_BIN" jobs list --json --all-scored --limit 500 --app-config-path "$APP_CONFIG_PATH" --profile-path "$PROFILE_PATH" --sources-path "$SOURCES_PATH"
 run_json_command "report" "$CLI_BIN" report --app-config-path "$APP_CONFIG_PATH" --profile-path "$PROFILE_PATH" --sources-path "$SOURCES_PATH"
 
-if ! python3 "$ROOT_DIR/scripts/export_application_ui_data.py" --state-root "$ROOT_DIR/state/applications" --out "$OUT_DIR/application.json"; then
+if ! python3 "$ROOT_DIR/scripts/export_application_ui_data.py" --state-root "$APPLICATION_STATE_ROOT" --out "$OUT_DIR/application.json"; then
   WARNINGS+=("application")
+fi
+if ! python3 "$ROOT_DIR/scripts/export_apply_sessions_ui_data.py" --apply-state-root "$APPLY_STATE_ROOT" --application-state-root "$APPLICATION_STATE_ROOT" --out "$OUT_DIR/apply_sessions.json"; then
+  WARNINGS+=("apply_sessions")
 fi
 if ! python3 "$ROOT_DIR/scripts/export_job_details_ui_data.py" --app-config-path "$APP_CONFIG_PATH" --out "$OUT_DIR/job_details.json"; then
   WARNINGS+=("job_details")

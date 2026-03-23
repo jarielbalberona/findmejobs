@@ -5,6 +5,7 @@ const state = {
   data: null,
   jobs: [],
   selectedJobId: null,
+  selectedApplyJobId: null,
 };
 
 const els = {
@@ -23,6 +24,18 @@ const els = {
   refreshBtn: document.getElementById("refreshBtn"),
   applicationsCards: document.getElementById("applicationsCards"),
   applicationsTable: document.getElementById("applicationsTable"),
+  applySessionsCards: document.getElementById("applySessionsCards"),
+  applySessionsTable: document.getElementById("applySessionsTable"),
+  applySessionMeta: document.getElementById("applySessionMeta"),
+  applySessionLinks: document.getElementById("applySessionLinks"),
+  applySessionGrid: document.getElementById("applySessionGrid"),
+  applyFilledFieldsTable: document.getElementById("applyFilledFieldsTable"),
+  applyUnresolvedFieldsTable: document.getElementById("applyUnresolvedFieldsTable"),
+  applyApprovalsTable: document.getElementById("applyApprovalsTable"),
+  applyReportText: document.getElementById("applyReportText"),
+  copyAllApplyCommandsBtn: document.getElementById("copyAllApplyCommandsBtn"),
+  copyApplyCommandsStatus: document.getElementById("copyApplyCommandsStatus"),
+  applyCommandsList: document.getElementById("applyCommandsList"),
   jobDetailMeta: document.getElementById("jobDetailMeta"),
   jobDetailLinks: document.getElementById("jobDetailLinks"),
   jobDetailGrid: document.getElementById("jobDetailGrid"),
@@ -66,6 +79,14 @@ async function fetchText(path) {
     return null;
   }
   return (await res.text()).trim();
+}
+
+async function fetchOptionalJson(path, fallback) {
+  const res = await fetch(path, { cache: "no-store" });
+  if (!res.ok) {
+    return fallback;
+  }
+  return res.json();
 }
 
 function card(label, value) {
@@ -173,6 +194,11 @@ function jobDetailsById() {
   return new Map(Object.entries(jobs));
 }
 
+function applySessionsByJobId() {
+  const rows = state.data?.applySessions?.sessions || [];
+  return new Map(rows.map((row) => [row.job_id, row]));
+}
+
 function configProfile(data) {
   return data?.config?.summary?.profile || data?.config?.profile || {};
 }
@@ -195,6 +221,10 @@ function sourcesSummary(data) {
 
 function jobsSummary(data) {
   return data?.jobs?.summary || data?.jobs || {};
+}
+
+function applySessionsSummary(data) {
+  return data?.applySessions || {};
 }
 
 function renderOverview(data) {
@@ -413,6 +443,21 @@ function buildApplicationCommands(jobId) {
   ];
 }
 
+function buildApplyCommands(jobId, actionId) {
+  const quotedJob = JSON.stringify(jobId);
+  const base = [
+    `findmejobs apply prepare --job-id ${quotedJob}`,
+    `findmejobs apply open --job-id ${quotedJob} --mode assisted`,
+    `findmejobs apply status --job-id ${quotedJob}`,
+    `findmejobs apply resume --job-id ${quotedJob}`,
+  ];
+  if (actionId) {
+    base.push(`findmejobs apply approve --job-id ${quotedJob} --action ${JSON.stringify(actionId)}`);
+  }
+  base.push(`findmejobs apply report --job-id ${quotedJob}`);
+  return base;
+}
+
 function renderCommandList(jobId) {
   const commands = buildApplicationCommands(jobId);
   const rows = commands
@@ -424,6 +469,189 @@ function renderCommandList(jobId) {
   els.jobCommandsList.innerHTML = `<div class="cmd-list">${rows}</div>`;
   els.jobCommandsList.setAttribute("data-commands", JSON.stringify(commands));
   els.copyCommandsStatus.textContent = "";
+}
+
+function renderApplyCommandList(jobId, actionId) {
+  const commands = buildApplyCommands(jobId, actionId);
+  const rows = commands
+    .map(
+      (cmd, idx) =>
+        `<div class="cmd-row"><code>${escapeHtml(cmd)}</code><button type="button" class="js-copy-apply-cmd" data-cmd-idx="${idx}">Copy</button></div>`,
+    )
+    .join("");
+  els.applyCommandsList.innerHTML = `<div class="cmd-list">${rows}</div>`;
+  els.applyCommandsList.setAttribute("data-commands", JSON.stringify(commands));
+  els.copyApplyCommandsStatus.textContent = "";
+}
+
+function renderApplySessions(data) {
+  const summary = applySessionsSummary(data);
+  const totals = summary?.totals || {};
+  const rows = summary?.sessions || [];
+
+  els.applySessionsCards.innerHTML = [
+    card("Sessions", totals.sessions ?? 0),
+    card("Awaiting approval", totals.awaiting_approval ?? 0),
+    card("Ready to resume", totals.ready_to_resume ?? 0),
+    card("Manual submit", totals.awaiting_manual_submit ?? 0),
+    card("With unresolved fields", totals.with_unresolved_fields ?? 0),
+  ].join("");
+
+  const body = rows
+    .map(
+      (row) => `
+      <tr>
+        <td><button class="linkish js-view-apply-session" data-job-id="${escapeHtml(row.job_id || "")}" type="button">${escapeHtml(row.job_id || "-")}</button></td>
+        <td>${escapeHtml(row.company_name || "-")}</td>
+        <td>${escapeHtml(row.role_title || "-")}</td>
+        <td>${escapeHtml(row.mode || "-")}</td>
+        <td><span class="status-chip status-${escapeHtml(row.status || "opened")}">${escapeHtml(row.status || "-")}</span></td>
+        <td>${escapeHtml(String(row.parse_confidence ?? "-"))}</td>
+        <td>${escapeHtml(String(row.pending_approvals ?? 0))}</td>
+        <td>${escapeHtml(String(row.unresolved_fields_count ?? 0))}</td>
+        <td>${escapeHtml(String(row.filled_fields_count ?? 0))}</td>
+        <td>${escapeHtml(row.current_step || "-")}</td>
+        <td>${escapeHtml(row.updated_at || "-")}</td>
+      </tr>`,
+    )
+    .join("");
+
+  els.applySessionsTable.innerHTML = `
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Job ID</th><th>Company</th><th>Role</th><th>Mode</th><th>Status</th><th>Parse</th>
+            <th>Pending Approvals</th><th>Unresolved</th><th>Filled</th><th>Current Step</th><th>Updated (UTC)</th>
+          </tr>
+        </thead>
+        <tbody>${body || '<tr><td colspan="11">No apply session state found under state/apply_sessions yet.</td></tr>'}</tbody>
+      </table>
+    </div>`;
+
+  if (state.selectedApplyJobId && applySessionsByJobId().has(state.selectedApplyJobId)) {
+    renderApplySessionDetail(state.selectedApplyJobId);
+  }
+}
+
+function renderApplySessionDetail(jobId) {
+  state.selectedApplyJobId = jobId;
+  const session = applySessionsByJobId().get(jobId);
+  if (!session) {
+    els.applySessionMeta.textContent = `No apply session found for job_id=${jobId}`;
+    els.applySessionLinks.innerHTML = "";
+    els.applySessionGrid.innerHTML = "";
+    els.applyFilledFieldsTable.innerHTML = "";
+    els.applyUnresolvedFieldsTable.innerHTML = "";
+    els.applyApprovalsTable.innerHTML = "";
+    renderPlainBlock(els.applyReportText, "", "No apply report yet.");
+    els.applyCommandsList.innerHTML = "";
+    els.applyCommandsList.removeAttribute("data-commands");
+    return;
+  }
+
+  els.applySessionMeta.textContent = `${jobId} | status=${session.status || "-"} | mode=${session.mode || "-"}`;
+
+  const links = [];
+  if (session.apply_url) {
+    links.push(`<a href="${escapeHtml(session.apply_url)}" target="_blank" rel="noreferrer">Open Apply URL</a>`);
+  }
+  if (session.current_page_url) {
+    links.push(`<a href="${escapeHtml(session.current_page_url)}" target="_blank" rel="noreferrer">Open Current Page</a>`);
+  }
+  els.applySessionLinks.innerHTML = links.join(" | ");
+
+  const summaryLeft = {
+    company: session.company_name || "-",
+    role: session.role_title || "-",
+    mode: session.mode || "-",
+    status: session.status || "-",
+    parse_confidence: session.parse_confidence ?? "-",
+    submit_available: session.submit_available ?? false,
+    manual_submit_required: session.manual_submit_required ?? true,
+    current_step: session.current_step || "-",
+    candidate_inputs_count: session.candidate_inputs_count ?? 0,
+  };
+  const summaryRight = {
+    pending_approvals: session.pending_approvals ?? 0,
+    approved_approvals: session.approved_approvals ?? 0,
+    unresolved_fields_count: session.unresolved_fields_count ?? 0,
+    filled_fields_count: session.filled_fields_count ?? 0,
+    approved_action_ids: session.approved_action_ids || [],
+    pending_action_ids: session.pending_action_ids || [],
+    updated_at: session.updated_at || "-",
+  };
+
+  els.applySessionGrid.innerHTML = [
+    renderKvCard("Session", summaryLeft, Object.keys(summaryLeft)),
+    renderKvCard("Progress", summaryRight, Object.keys(summaryRight)),
+  ].join("");
+
+  const filledRows = (session.filled_fields || [])
+    .map(
+      (item) => `
+      <tr>
+        <td>${escapeHtml(item.field_key || "-")}</td>
+        <td>${escapeHtml(item.label || "-")}</td>
+        <td>${escapeHtml(item.action_type || "-")}</td>
+        <td>${escapeHtml(item.status || "-")}</td>
+        <td>${escapeHtml(item.source || "-")}</td>
+        <td>${escapeHtml(item.page || "-")}</td>
+      </tr>`,
+    )
+    .join("");
+  els.applyFilledFieldsTable.innerHTML = `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Field Key</th><th>Label</th><th>Action</th><th>Status</th><th>Source</th><th>Page</th></tr></thead>
+        <tbody>${filledRows || '<tr><td colspan="6">No filled fields recorded.</td></tr>'}</tbody>
+      </table>
+    </div>`;
+
+  const unresolvedRows = (session.unresolved_fields || [])
+    .map(
+      (item) => `
+      <tr>
+        <td>${escapeHtml(item.field_key || "-")}</td>
+        <td>${escapeHtml(item.label || "-")}</td>
+        <td>${escapeHtml(item.reason_code || "-")}</td>
+        <td>${escapeHtml(item.message || "-")}</td>
+        <td>${escapeHtml(String(item.required ?? false))}</td>
+        <td>${escapeHtml(item.page || "-")}</td>
+      </tr>`,
+    )
+    .join("");
+  els.applyUnresolvedFieldsTable.innerHTML = `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Field Key</th><th>Label</th><th>Reason</th><th>Message</th><th>Required</th><th>Page</th></tr></thead>
+        <tbody>${unresolvedRows || '<tr><td colspan="6">No unresolved fields.</td></tr>'}</tbody>
+      </table>
+    </div>`;
+
+  const approvalsRows = (session.approvals_required || [])
+    .map(
+      (item) => `
+      <tr>
+        <td>${escapeHtml(item.action_id || "-")}</td>
+        <td>${escapeHtml(item.gate_type || "-")}</td>
+        <td>${escapeHtml(item.status || "-")}</td>
+        <td>${escapeHtml(item.title || "-")}</td>
+        <td>${escapeHtml(item.reason || "-")}</td>
+      </tr>`,
+    )
+    .join("");
+  els.applyApprovalsTable.innerHTML = `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Action ID</th><th>Gate Type</th><th>Status</th><th>Title</th><th>Reason</th></tr></thead>
+        <tbody>${approvalsRows || '<tr><td colspan="5">No approval gates.</td></tr>'}</tbody>
+      </table>
+    </div>`;
+
+  renderPlainBlock(els.applyReportText, session.report_markdown || "", "No apply report yet.");
+  const firstPendingAction = (session.approvals_required || []).find((item) => item.status === "pending")?.action_id;
+  renderApplyCommandList(jobId, firstPendingAction || null);
 }
 
 function renderJobDetail(jobId) {
@@ -573,18 +801,19 @@ function applyJobFilters() {
 async function loadAll() {
   clearError();
   try {
-    const [config, ranking, sources, jobs, report, application, jobDetails, generatedAt] = await Promise.all([
+    const [config, ranking, sources, jobs, report, application, applySessions, jobDetails, generatedAt] = await Promise.all([
       fetchJson(`${DATA_BASE}/config.json`),
       fetchJson(`${DATA_BASE}/ranking.json`),
       fetchJson(`${DATA_BASE}/sources.json`),
       fetchJson(`${DATA_BASE}/jobs.json`),
       fetchJson(`${DATA_BASE}/report.json`),
       fetchJson(`${DATA_BASE}/application.json`),
+      fetchOptionalJson(`${DATA_BASE}/apply_sessions.json`, { totals: {}, sessions: [], warnings: ["apply_sessions_not_exported"] }),
       fetchJson(`${DATA_BASE}/job_details.json`),
       fetchText(`${DATA_BASE}/generated_at.txt`),
     ]);
 
-    state.data = { config, ranking, sources, jobs, report, application, jobDetails, generatedAt };
+    state.data = { config, ranking, sources, jobs, report, application, applySessions, jobDetails, generatedAt };
     els.generatedAt.textContent = generatedAt ? `Snapshot: ${generatedAt}` : "Snapshot loaded";
     if (report?.status === "error") {
       showError(`report snapshot warning: ${report.message || "report command failed during export"}`);
@@ -596,6 +825,7 @@ async function loadAll() {
     renderSources(state.data);
     renderJobs(state.data);
     renderApplications(state.data);
+    renderApplySessions(state.data);
     if (state.selectedJobId) {
       renderJobDetail(state.selectedJobId);
     }
@@ -631,6 +861,15 @@ function bindFilters() {
     switchTab("job-detail");
   });
 
+  document.body.addEventListener("click", (evt) => {
+    const btn = evt.target.closest(".js-view-apply-session");
+    if (!btn) return;
+    const jobId = btn.getAttribute("data-job-id");
+    if (!jobId) return;
+    renderApplySessionDetail(jobId);
+    switchTab("apply-sessions");
+  });
+
   document.body.addEventListener("click", async (evt) => {
     const btn = evt.target.closest(".js-copy-cmd");
     if (!btn) return;
@@ -645,6 +884,23 @@ function bindFilters() {
       els.copyCommandsStatus.textContent = "Command copied.";
     } catch (_err) {
       els.copyCommandsStatus.textContent = "Copy failed.";
+    }
+  });
+
+  document.body.addEventListener("click", async (evt) => {
+    const btn = evt.target.closest(".js-copy-apply-cmd");
+    if (!btn) return;
+    const raw = els.applyCommandsList.getAttribute("data-commands");
+    if (!raw) return;
+    const cmds = JSON.parse(raw);
+    const idx = Number(btn.getAttribute("data-cmd-idx"));
+    const value = cmds[idx] || "";
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      els.copyApplyCommandsStatus.textContent = "Command copied.";
+    } catch (_err) {
+      els.copyApplyCommandsStatus.textContent = "Copy failed.";
     }
   });
 
@@ -678,6 +934,25 @@ function bindFilters() {
       els.copyCommandsStatus.textContent = "All commands copied.";
     } catch (_err) {
       els.copyCommandsStatus.textContent = "Copy failed.";
+    }
+  });
+
+  els.copyAllApplyCommandsBtn.addEventListener("click", async () => {
+    const raw = els.applyCommandsList.getAttribute("data-commands");
+    if (!raw) {
+      els.copyApplyCommandsStatus.textContent = "No commands yet.";
+      return;
+    }
+    const cmds = JSON.parse(raw);
+    if (!Array.isArray(cmds) || !cmds.length) {
+      els.copyApplyCommandsStatus.textContent = "No commands yet.";
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(cmds.join("\n"));
+      els.copyApplyCommandsStatus.textContent = "All commands copied.";
+    } catch (_err) {
+      els.copyApplyCommandsStatus.textContent = "Copy failed.";
     }
   });
 }

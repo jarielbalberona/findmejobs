@@ -7,6 +7,7 @@ Goal: continue through safe multi-step forms while preserving approval gates and
 ```bash
 findmejobs apply prepare --job-id <job_id> --json
 findmejobs apply open --job-id <job_id> --mode assisted --json
+findmejobs apply browser-run --job-id <job_id> --backend playwright --json
 findmejobs apply status --job-id <job_id> --json
 findmejobs apply approve --job-id <job_id> --action <action_id> --json
 findmejobs apply resume --job-id <job_id> --json

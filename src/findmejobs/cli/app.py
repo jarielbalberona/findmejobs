@@ -17,7 +17,9 @@ from findmejobs import __version__ as FINDMEJOBS_VERSION
 from sqlalchemy import select
 
 from findmejobs.application.service import ApplicationDraftService
+from findmejobs.apply.browser import ApplyBrowserRunner, build_browser_backend
 from findmejobs.apply.service import ApplySessionService
+from findmejobs.apply.openclaw import FilesystemApplyOpenClawClient
 from findmejobs.config.loader import ensure_directories, load_app_config, load_profile_config, load_source_configs, resolve_profile_config_path
 from findmejobs.config.models import RankingWeights, SourceConfig, SourcesFileConfig
 from findmejobs.config.source_file import (
@@ -2042,6 +2044,11 @@ def apply_prepare(
     profile_path: Path = typer.Option(Path("config/profile.yaml")),
     sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
     application_state_root: Path = typer.Option(Path("state/applications")),
+    export_ui_data: bool = typer.Option(
+        True,
+        "--export-ui-data/--no-export-ui-data",
+        help="Run scripts/export_ui_data.sh after successful apply prepare (default: on).",
+    ),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
     app_config, profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_path)
@@ -2053,14 +2060,25 @@ def apply_prepare(
             except (FileNotFoundError, ValueError) as exc:
                 _emit_standard_envelope(json_out, "apply_prepare", False, errors=[str(exc)], text=f"apply prepare failed: {exc}")
                 raise typer.Exit(code=1)
+    ui_art = _artifacts_for_ui_export(
+        export_ui_data,
+        app_config_path=app_config_path,
+        profile_path=profile_path,
+        sources_path=sources_path,
+    )
     _emit_standard_envelope(
         json_out,
         "apply_prepare",
         True,
         summary=result,
-        artifacts={"application_state_root": str(application_state_root.resolve())},
+        artifacts={
+            "application_state_root": str(application_state_root.resolve()),
+            "ui_export": ui_art,
+        },
         text=f"apply prepare complete: job_id={job_id}",
     )
+    if not json_out:
+        _echo_ui_export_status(ui_art, enabled=export_ui_data)
 
 
 @apply_app.command("open")
@@ -2074,6 +2092,11 @@ def apply_open(
     sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
     application_state_root: Path = typer.Option(Path("state/applications")),
     apply_state_root: Path = typer.Option(Path("state/apply_sessions")),
+    export_ui_data: bool = typer.Option(
+        True,
+        "--export-ui-data/--no-export-ui-data",
+        help="Run scripts/export_ui_data.sh after successful apply open (default: on).",
+    ),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
     app_config, profile, _sources, session_factory = _load_runtime(app_config_path, profile_path, sources_path)
@@ -2101,6 +2124,12 @@ def apply_open(
             "pending_approvals": len([item for item in result.approvals_required if item.status == "pending"]),
         }
     )
+    ui_art = _artifacts_for_ui_export(
+        export_ui_data,
+        app_config_path=app_config_path,
+        profile_path=profile_path,
+        sources_path=sources_path,
+    )
     _emit_standard_envelope(
         json_out,
         "apply_open",
@@ -2111,9 +2140,12 @@ def apply_open(
             "apply_state_root": str(apply_state_root.resolve()),
             "session_root": str((apply_state_root / job_id).resolve()),
             "browser_request": str((apply_state_root / job_id / "openclaw" / "browser.request.json").resolve()),
+            "ui_export": ui_art,
         },
         text=f"apply open complete: job_id={job_id} mode={mode} status={result.session.status}",
     )
+    if not json_out:
+        _echo_ui_export_status(ui_art, enabled=export_ui_data)
 
 
 @apply_app.command("status")
@@ -2121,6 +2153,14 @@ def apply_status(
     job_id: str = typer.Option(...),
     apply_state_root: Path = typer.Option(Path("state/apply_sessions")),
     application_state_root: Path = typer.Option(Path("state/applications")),
+    app_config_path: Path = typer.Option(Path("config/app.toml"), exists=True),
+    profile_path: Path = typer.Option(Path("config/profile.yaml")),
+    sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
+    export_ui_data: bool = typer.Option(
+        True,
+        "--export-ui-data/--no-export-ui-data",
+        help="Run scripts/export_ui_data.sh after successful apply status (default: on).",
+    ),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
     service = _apply_service(application_state_root, apply_state_root)
@@ -2129,6 +2169,12 @@ def apply_status(
     except (FileNotFoundError, ValueError) as exc:
         _emit_standard_envelope(json_out, "apply_status", False, errors=[str(exc)], text=f"apply status failed: {exc}")
         raise typer.Exit(code=1)
+    ui_art = _artifacts_for_ui_export(
+        export_ui_data,
+        app_config_path=app_config_path,
+        profile_path=profile_path,
+        sources_path=sources_path,
+    )
     _emit_standard_envelope(
         json_out,
         "apply_status",
@@ -2139,9 +2185,11 @@ def apply_status(
             "unresolved_fields": [item.model_dump(mode="json") for item in status.unresolved_fields],
             "approvals_required": [item.model_dump(mode="json") for item in status.approvals_required],
         },
-        artifacts={"session_root": str((apply_state_root / job_id).resolve())},
+        artifacts={"session_root": str((apply_state_root / job_id).resolve()), "ui_export": ui_art},
         text=f"apply status: job_id={job_id} status={status.session.status}",
     )
+    if not json_out:
+        _echo_ui_export_status(ui_art, enabled=export_ui_data)
 
 
 @apply_app.command("resume")
@@ -2149,6 +2197,14 @@ def apply_resume(
     job_id: str = typer.Option(...),
     apply_state_root: Path = typer.Option(Path("state/apply_sessions")),
     application_state_root: Path = typer.Option(Path("state/applications")),
+    app_config_path: Path = typer.Option(Path("config/app.toml"), exists=True),
+    profile_path: Path = typer.Option(Path("config/profile.yaml")),
+    sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
+    export_ui_data: bool = typer.Option(
+        True,
+        "--export-ui-data/--no-export-ui-data",
+        help="Run scripts/export_ui_data.sh after successful apply resume (default: on).",
+    ),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
     service = _apply_service(application_state_root, apply_state_root)
@@ -2157,14 +2213,25 @@ def apply_resume(
     except (FileNotFoundError, ValueError) as exc:
         _emit_standard_envelope(json_out, "apply_resume", False, errors=[str(exc)], text=f"apply resume failed: {exc}")
         raise typer.Exit(code=1)
+    ui_art = _artifacts_for_ui_export(
+        export_ui_data,
+        app_config_path=app_config_path,
+        profile_path=profile_path,
+        sources_path=sources_path,
+    )
     _emit_standard_envelope(
         json_out,
         "apply_resume",
         True,
         summary=status.session.model_dump(mode="json"),
-        artifacts={"browser_request": str((apply_state_root / job_id / "openclaw" / "browser.request.json").resolve())},
+        artifacts={
+            "browser_request": str((apply_state_root / job_id / "openclaw" / "browser.request.json").resolve()),
+            "ui_export": ui_art,
+        },
         text=f"apply resume queued: job_id={job_id} status={status.session.status}",
     )
+    if not json_out:
+        _echo_ui_export_status(ui_art, enabled=export_ui_data)
 
 
 @apply_app.command("approve")
@@ -2173,6 +2240,14 @@ def apply_approve(
     action_id: str = typer.Option(..., "--action"),
     apply_state_root: Path = typer.Option(Path("state/apply_sessions")),
     application_state_root: Path = typer.Option(Path("state/applications")),
+    app_config_path: Path = typer.Option(Path("config/app.toml"), exists=True),
+    profile_path: Path = typer.Option(Path("config/profile.yaml")),
+    sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
+    export_ui_data: bool = typer.Option(
+        True,
+        "--export-ui-data/--no-export-ui-data",
+        help="Run scripts/export_ui_data.sh after successful apply approve (default: on).",
+    ),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
     service = _apply_service(application_state_root, apply_state_root)
@@ -2181,6 +2256,12 @@ def apply_approve(
     except (FileNotFoundError, ValueError) as exc:
         _emit_standard_envelope(json_out, "apply_approve", False, errors=[str(exc)], text=f"apply approve failed: {exc}")
         raise typer.Exit(code=1)
+    ui_art = _artifacts_for_ui_export(
+        export_ui_data,
+        app_config_path=app_config_path,
+        profile_path=profile_path,
+        sources_path=sources_path,
+    )
     _emit_standard_envelope(
         json_out,
         "apply_approve",
@@ -2191,8 +2272,11 @@ def apply_approve(
             "status": status.session.status,
             "approved_action_ids": status.session.approved_action_ids,
         },
+        artifacts={"ui_export": ui_art},
         text=f"apply approve complete: job_id={job_id} action={action_id}",
     )
+    if not json_out:
+        _echo_ui_export_status(ui_art, enabled=export_ui_data)
 
 
 @apply_app.command("cancel")
@@ -2200,6 +2284,14 @@ def apply_cancel(
     job_id: str = typer.Option(...),
     apply_state_root: Path = typer.Option(Path("state/apply_sessions")),
     application_state_root: Path = typer.Option(Path("state/applications")),
+    app_config_path: Path = typer.Option(Path("config/app.toml"), exists=True),
+    profile_path: Path = typer.Option(Path("config/profile.yaml")),
+    sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
+    export_ui_data: bool = typer.Option(
+        True,
+        "--export-ui-data/--no-export-ui-data",
+        help="Run scripts/export_ui_data.sh after successful apply cancel (default: on).",
+    ),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
     service = _apply_service(application_state_root, apply_state_root)
@@ -2208,13 +2300,22 @@ def apply_cancel(
     except (FileNotFoundError, ValueError) as exc:
         _emit_standard_envelope(json_out, "apply_cancel", False, errors=[str(exc)], text=f"apply cancel failed: {exc}")
         raise typer.Exit(code=1)
+    ui_art = _artifacts_for_ui_export(
+        export_ui_data,
+        app_config_path=app_config_path,
+        profile_path=profile_path,
+        sources_path=sources_path,
+    )
     _emit_standard_envelope(
         json_out,
         "apply_cancel",
         True,
         summary=status.session.model_dump(mode="json"),
+        artifacts={"ui_export": ui_art},
         text=f"apply cancel complete: job_id={job_id}",
     )
+    if not json_out:
+        _echo_ui_export_status(ui_art, enabled=export_ui_data)
 
 
 @apply_app.command("report")
@@ -2222,6 +2323,14 @@ def apply_report(
     job_id: str = typer.Option(...),
     apply_state_root: Path = typer.Option(Path("state/apply_sessions")),
     application_state_root: Path = typer.Option(Path("state/applications")),
+    app_config_path: Path = typer.Option(Path("config/app.toml"), exists=True),
+    profile_path: Path = typer.Option(Path("config/profile.yaml")),
+    sources_path: Path = typer.Option(Path("config/sources.yaml"), "--sources-path", "--sources-dir"),
+    export_ui_data: bool = typer.Option(
+        True,
+        "--export-ui-data/--no-export-ui-data",
+        help="Run scripts/export_ui_data.sh after successful apply report (default: on).",
+    ),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
     service = _apply_service(application_state_root, apply_state_root)
@@ -2231,14 +2340,25 @@ def apply_report(
     except (FileNotFoundError, ValueError) as exc:
         _emit_standard_envelope(json_out, "apply_report", False, errors=[str(exc)], text=f"apply report failed: {exc}")
         raise typer.Exit(code=1)
+    ui_art = _artifacts_for_ui_export(
+        export_ui_data,
+        app_config_path=app_config_path,
+        profile_path=profile_path,
+        sources_path=sources_path,
+    )
     _emit_standard_envelope(
         json_out,
         "apply_report",
         True,
         summary={"job_id": job_id, "status": status.session.status, "report_markdown": report},
-        artifacts={"report_path": str((apply_state_root / job_id / "apply_report.md").resolve())},
+        artifacts={
+            "report_path": str((apply_state_root / job_id / "apply_report.md").resolve()),
+            "ui_export": ui_art,
+        },
         text=None if json_out else report,
     )
+    if not json_out:
+        _echo_ui_export_status(ui_art, enabled=export_ui_data)
 
 
 @apply_app.command("list")
@@ -2262,6 +2382,44 @@ def apply_list(
         typer.echo(
             f"{row.job_id}\t{row.mode}\t{row.status}\tpending={row.pending_approvals}\tunresolved={row.unresolved_fields}"
         )
+
+
+@apply_app.command("browser-run")
+def apply_browser_run(
+    job_id: str | None = typer.Option(None, "--job-id"),
+    request_file: Path | None = typer.Option(None, "--request-file", exists=True, dir_okay=False),
+    apply_state_root: Path = typer.Option(Path("state/apply_sessions")),
+    backend: str = typer.Option("playwright", "--backend"),
+    browser_profile_dir: Path | None = typer.Option(None, "--browser-profile-dir", dir_okay=True, file_okay=False),
+    json_out: bool = typer.Option(False, "--json"),
+) -> None:
+    if request_file is None and job_id is None:
+        _emit_standard_envelope(json_out, "apply_browser_run", False, errors=["job_id_or_request_file_required"], text="apply browser-run failed: job_id_or_request_file_required")
+        raise typer.Exit(code=1)
+    try:
+        if request_file is None:
+            assert job_id is not None
+            request_root = apply_state_root / job_id / "openclaw"
+        else:
+            request_root = request_file.parent
+            if job_id is None:
+                job_id = request_root.parent.name
+        client = FilesystemApplyOpenClawClient(request_root)
+        request = client.load_browser_request()
+        runner = ApplyBrowserRunner(build_browser_backend(backend))
+        result = runner.run(request, browser_profile_dir=browser_profile_dir)
+        client.export_browser_result(result)
+    except Exception as exc:
+        _emit_standard_envelope(json_out, "apply_browser_run", False, errors=[str(exc)], text=f"apply browser-run failed: {exc}")
+        raise typer.Exit(code=1)
+    _emit_standard_envelope(
+        json_out,
+        "apply_browser_run",
+        True,
+        summary=result.model_dump(mode="json"),
+        artifacts={"browser_result": str((request_root / "browser.result.json").resolve())},
+        text=f"apply browser-run complete: job_id={request.job_id} step={result.step_label} submit_available={result.submit_available}",
+    )
 
 
 @profile_app.command("import")

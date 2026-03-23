@@ -5,7 +5,9 @@ from pathlib import Path
 
 import pytest
 
+from findmejobs.apply.browser import ApplyBrowserRunner, BrowserField, BrowserStepSnapshot
 from findmejobs.apply.models import ApplyBrowserResult
+from findmejobs.apply.openclaw import FilesystemApplyOpenClawClient
 from findmejobs.apply.service import ApplySessionService
 from findmejobs.application.service import ApplicationDraftService
 from findmejobs.cli.app import app
@@ -230,6 +232,37 @@ def _assert_envelope(payload: dict[str, object], *, command: str, ok: bool = Tru
 
 def _rewrite_profile_field(profile_path: Path, old: str, new: str) -> None:
     profile_path.write_text(profile_path.read_text(encoding="utf-8").replace(old, new), encoding="utf-8")
+
+
+class _FakeBrowserBackend:
+    def __init__(self, snapshots: list[BrowserStepSnapshot]) -> None:
+        self.snapshots = snapshots
+        self.index = 0
+        self.fills: list[tuple[str, str]] = []
+        self.uploads: list[tuple[str, str]] = []
+        self.opened: list[str] = []
+        self.next_clicks: list[str | None] = []
+        self.closed = False
+
+    def open(self, *, url: str, browser_profile: str | None = None, browser_profile_dir: Path | None = None) -> BrowserStepSnapshot:
+        _ = browser_profile
+        _ = browser_profile_dir
+        self.opened.append(url)
+        return self.snapshots[self.index]
+
+    def fill(self, field: BrowserField, value: str) -> None:
+        self.fills.append((field.field_id, value))
+
+    def upload(self, field: BrowserField, file_path: Path) -> None:
+        self.uploads.append((field.field_id, str(file_path)))
+
+    def click_next(self, label: str | None = None) -> BrowserStepSnapshot:
+        self.next_clicks.append(label)
+        self.index += 1
+        return self.snapshots[self.index]
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def test_guided_open_creates_session_and_blocks_submit(cli_runner, apply_runtime: dict[str, object]) -> None:
@@ -1096,3 +1129,214 @@ def test_browser_result_markup_is_rejected_before_persisting_operator_artifacts(
     with pytest.raises(ValueError, match="contains markup"):
         service.get_status(job_id=job_id)
     assert not (apply_runtime["apply_state_root"] / job_id / "events" / "evt-markup.json").exists()
+
+
+def test_browser_runner_guided_fills_safe_fields_and_stops_before_next_or_submit(apply_runtime: dict[str, object]) -> None:
+    with apply_runtime["session_factory"]() as session:
+        job_id = _seed_apply_job(session, apply_runtime["profile"], seed_key="runner-guided")
+    service = ApplySessionService(
+        application_state_root=apply_runtime["application_state_root"],
+        apply_state_root=apply_runtime["apply_state_root"],
+    )
+    _prepare_application(service, apply_runtime, job_id=job_id)
+    with apply_runtime["session_factory"]() as session:
+        service.open_session(session, apply_runtime["profile"], job_id=job_id, mode="guided")
+    request = FilesystemApplyOpenClawClient(apply_runtime["apply_state_root"] / job_id / "openclaw").load_browser_request()
+    backend = _FakeBrowserBackend(
+        [
+            BrowserStepSnapshot(
+                step_id="guided-step",
+                step_label="Guided form",
+                page_url=request.apply_url,
+                parse_confidence=0.94,
+                next_action_label="Next",
+                submit_visible=False,
+                fields=[
+                    BrowserField(field_id="full_name", label="Full name", field_type="text"),
+                    BrowserField(field_id="email", label="Email", field_type="email"),
+                    BrowserField(field_id="phone", label="Phone", field_type="tel"),
+                ],
+            )
+        ]
+    )
+    result = ApplyBrowserRunner(backend).run(request)
+    assert result.safe_to_continue is False
+    assert result.submit_available is False
+    assert backend.next_clicks == []
+    assert {field_id for field_id, _ in backend.fills} == {"full_name", "email", "phone"}
+
+
+def test_browser_runner_assisted_advances_across_safe_multi_step_flow(apply_runtime: dict[str, object]) -> None:
+    with apply_runtime["session_factory"]() as session:
+        job_id = _seed_apply_job(session, apply_runtime["profile"], seed_key="runner-assisted")
+    service = ApplySessionService(
+        application_state_root=apply_runtime["application_state_root"],
+        apply_state_root=apply_runtime["apply_state_root"],
+    )
+    _prepare_application(service, apply_runtime, job_id=job_id)
+    with apply_runtime["session_factory"]() as session:
+        service.open_session(session, apply_runtime["profile"], job_id=job_id, mode="assisted")
+    request = FilesystemApplyOpenClawClient(apply_runtime["apply_state_root"] / job_id / "openclaw").load_browser_request()
+    backend = _FakeBrowserBackend(
+        [
+            BrowserStepSnapshot(
+                step_id="step-1",
+                step_label="Contact",
+                page_url=request.apply_url,
+                parse_confidence=0.95,
+                next_action_label="Next",
+                submit_visible=False,
+                fields=[BrowserField(field_id="linkedin", label="LinkedIn", field_type="url")],
+            ),
+            BrowserStepSnapshot(
+                step_id="step-2",
+                step_label="Review",
+                page_url=request.apply_url + "/review",
+                parse_confidence=0.93,
+                next_action_label=None,
+                submit_visible=False,
+                fields=[BrowserField(field_id="github", label="GitHub", field_type="url")],
+            ),
+        ]
+    )
+    result = ApplyBrowserRunner(backend).run(request)
+    assert backend.next_clicks == ["Next"]
+    assert result.step_id == "step-2"
+    assert result.safe_to_continue is False
+    assert {field_id for field_id, _ in backend.fills} == {"linkedin", "github"}
+
+
+def test_browser_runner_blocks_conflicting_prefilled_value_with_approval_gate(apply_runtime: dict[str, object]) -> None:
+    with apply_runtime["session_factory"]() as session:
+        job_id = _seed_apply_job(session, apply_runtime["profile"], seed_key="runner-conflict")
+    service = ApplySessionService(
+        application_state_root=apply_runtime["application_state_root"],
+        apply_state_root=apply_runtime["apply_state_root"],
+    )
+    _prepare_application(service, apply_runtime, job_id=job_id)
+    with apply_runtime["session_factory"]() as session:
+        service.open_session(session, apply_runtime["profile"], job_id=job_id, mode="assisted")
+    request = FilesystemApplyOpenClawClient(apply_runtime["apply_state_root"] / job_id / "openclaw").load_browser_request()
+    backend = _FakeBrowserBackend(
+        [
+            BrowserStepSnapshot(
+                step_id="conflict-step",
+                step_label="Conflict",
+                page_url=request.apply_url,
+                parse_confidence=0.91,
+                fields=[BrowserField(field_id="location", label="Location", field_type="text", value="Singapore")],
+            )
+        ]
+    )
+    result = ApplyBrowserRunner(backend).run(request)
+    assert backend.fills == []
+    assert any(gate.gate_type == "overwrite_conflict" for gate in result.requested_approvals)
+    assert any(action.status == "blocked" for action in result.filled_fields)
+
+
+def test_browser_runner_leaves_unknown_and_sensitive_questions_unresolved(apply_runtime: dict[str, object]) -> None:
+    with apply_runtime["session_factory"]() as session:
+        job_id = _seed_apply_job(session, apply_runtime["profile"], seed_key="runner-unknown")
+    service = ApplySessionService(
+        application_state_root=apply_runtime["application_state_root"],
+        apply_state_root=apply_runtime["apply_state_root"],
+    )
+    _prepare_application(service, apply_runtime, job_id=job_id)
+    with apply_runtime["session_factory"]() as session:
+        service.open_session(session, apply_runtime["profile"], job_id=job_id, mode="assisted")
+    request = FilesystemApplyOpenClawClient(apply_runtime["apply_state_root"] / job_id / "openclaw").load_browser_request()
+    backend = _FakeBrowserBackend(
+        [
+            BrowserStepSnapshot(
+                step_id="unknown-step",
+                step_label="Questions",
+                page_url=request.apply_url,
+                parse_confidence=0.88,
+                fields=[
+                    BrowserField(field_id="salary", label="Expected salary", field_type="text"),
+                    BrowserField(field_id="fintech", label="Describe your fintech experience", field_type="textarea"),
+                ],
+            )
+        ]
+    )
+    result = ApplyBrowserRunner(backend).run(request)
+    assert any(item.field_key == "salary_expectation" for item in result.unresolved_fields)
+    assert any(item.reason_code == "unknown_question" for item in result.unresolved_fields)
+    assert any(gate.gate_type == "unknown_question" for gate in result.requested_approvals)
+
+
+def test_browser_runner_uploads_validated_resume_and_never_clicks_submit(apply_runtime: dict[str, object]) -> None:
+    with apply_runtime["session_factory"]() as session:
+        job_id = _seed_apply_job(session, apply_runtime["profile"], seed_key="runner-upload")
+    service = ApplySessionService(
+        application_state_root=apply_runtime["application_state_root"],
+        apply_state_root=apply_runtime["apply_state_root"],
+    )
+    _prepare_application(service, apply_runtime, job_id=job_id)
+    with apply_runtime["session_factory"]() as session:
+        service.open_session(session, apply_runtime["profile"], job_id=job_id, mode="assisted")
+    client = FilesystemApplyOpenClawClient(apply_runtime["apply_state_root"] / job_id / "openclaw")
+    request = client.load_browser_request()
+    backend = _FakeBrowserBackend(
+        [
+            BrowserStepSnapshot(
+                step_id="upload-step",
+                step_label="Resume upload",
+                page_url=request.apply_url,
+                parse_confidence=0.96,
+                submit_visible=True,
+                fields=[BrowserField(field_id="resume", label="Resume", field_type="file")],
+            )
+        ]
+    )
+    result = ApplyBrowserRunner(backend).run(request)
+    assert len(backend.uploads) == 1
+    assert result.submit_available is True
+    assert any(gate.gate_type == "final_submit" and gate.status == "manual_only" for gate in result.requested_approvals)
+    assert backend.next_clicks == []
+
+
+def test_apply_browser_run_cli_writes_real_browser_result_with_mocked_backend(cli_runner, apply_runtime: dict[str, object], monkeypatch) -> None:
+    with apply_runtime["session_factory"]() as session:
+        job_id = _seed_apply_job(session, apply_runtime["profile"], seed_key="browser-cli")
+    service = ApplySessionService(
+        application_state_root=apply_runtime["application_state_root"],
+        apply_state_root=apply_runtime["apply_state_root"],
+    )
+    _prepare_application(service, apply_runtime, job_id=job_id)
+    with apply_runtime["session_factory"]() as session:
+        service.open_session(session, apply_runtime["profile"], job_id=job_id, mode="guided")
+    backend = _FakeBrowserBackend(
+        [
+            BrowserStepSnapshot(
+                step_id="cli-step",
+                step_label="CLI form",
+                page_url="https://jobs.example.test/cli",
+                parse_confidence=0.9,
+                fields=[BrowserField(field_id="full_name", label="Full name", field_type="text")],
+            )
+        ]
+    )
+    monkeypatch.setattr("findmejobs.cli.app.build_browser_backend", lambda backend_name: backend)
+    result = cli_runner.invoke(
+        app,
+        [
+            "apply",
+            "browser-run",
+            "--job-id",
+            job_id,
+            "--apply-state-root",
+            str(apply_runtime["apply_state_root"]),
+            "--backend",
+            "playwright",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    _assert_envelope(payload, command="apply_browser_run")
+    browser_result = json.loads(
+        (apply_runtime["apply_state_root"] / job_id / "openclaw" / "browser.result.json").read_text(encoding="utf-8")
+    )
+    assert browser_result["step_id"] == "cli-step"
+    assert browser_result["filled_fields"][0]["field_key"] == "full_name"

@@ -8,6 +8,9 @@
   --eligible: #116530;
   --below: #b26f00;
   --filtered: #9b1c1c;
+  --awaiting: #7c3a00;
+  --resume: #0b5cab;
+  --manual: #6a1b9a;
 }
 
 * {
@@ -221,6 +224,28 @@ th {
   background: #fdeaea;
 }
 
+.status-awaiting_approval {
+  color: var(--awaiting);
+  background: #fff4e8;
+}
+
+.status-ready_to_resume,
+.status-in_progress,
+.status-opened {
+  color: var(--resume);
+  background: #e9f2ff;
+}
+
+.status-awaiting_manual_submit {
+  color: var(--manual);
+  background: #f3eafd;
+}
+
+.status-cancelled {
+  color: #7c2d12;
+  background: #ffedd5;
+}
+
 .muted {
   color: var(--muted);
   font-size: 0.86rem;
@@ -238,8 +263,13 @@ th {
 .detail-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.75rem;
   margin-bottom: 0.5rem;
+}
+
+.detail-actions a {
+  color: var(--accent);
 }
 
 .detail-rich {

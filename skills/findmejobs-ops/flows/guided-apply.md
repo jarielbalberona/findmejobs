@@ -7,6 +7,7 @@ Goal: open a bounded browser-assisted apply session, fill obvious fields, and st
 ```bash
 findmejobs apply prepare --job-id <job_id> --json
 findmejobs apply open --job-id <job_id> --mode guided --json
+findmejobs apply browser-run --job-id <job_id> --backend playwright --json
 findmejobs apply status --job-id <job_id> --json
 findmejobs apply report --job-id <job_id> --json
 ```

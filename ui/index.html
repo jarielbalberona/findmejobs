@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>findmejobs Local Dashboard</title>
-    <link rel="stylesheet" href="./styles.css?v=20260323b" />
+    <link rel="stylesheet" href="./styles.css?v=20260323c" />
   </head>
   <body>
     <header class="topbar">
@@ -25,6 +25,7 @@
       <button class="tab" data-tab="sources" type="button">Sources</button>
       <button class="tab" data-tab="jobs" type="button">Jobs</button>
       <button class="tab" data-tab="applications" type="button">Application Helper</button>
+      <button class="tab" data-tab="apply-sessions" type="button">Apply Sessions</button>
       <button class="tab" data-tab="job-detail" type="button">Job Detail</button>
     </nav>
 
@@ -88,6 +89,36 @@
         <div id="applicationsTable"></div>
       </section>
 
+      <section class="panel" data-panel="apply-sessions">
+        <h2>Apply Sessions</h2>
+        <div id="applySessionsCards" class="cards"></div>
+        <div id="applySessionsTable"></div>
+
+        <h3>Session Detail</h3>
+        <div id="applySessionMeta" class="muted">Select a session row.</div>
+        <div id="applySessionLinks" class="detail-actions"></div>
+        <div id="applySessionGrid" class="grid-two"></div>
+
+        <h3>Filled Fields</h3>
+        <div id="applyFilledFieldsTable"></div>
+
+        <h3>Unresolved Fields</h3>
+        <div id="applyUnresolvedFieldsTable"></div>
+
+        <h3>Approval Gates</h3>
+        <div id="applyApprovalsTable"></div>
+
+        <h3>Session Report</h3>
+        <div id="applyReportText" class="detail-rich detail-plain"></div>
+
+        <h3>Apply Commands</h3>
+        <div class="detail-actions">
+          <button id="copyAllApplyCommandsBtn" type="button">Copy All Commands</button>
+          <span id="copyApplyCommandsStatus" class="muted"></span>
+        </div>
+        <div id="applyCommandsList"></div>
+      </section>
+
       <section class="panel" data-panel="job-detail">
         <h2>Job Detail</h2>
         <div id="jobDetailMeta" class="muted">Select a job from Jobs or Application Helper.</div>
@@ -119,6 +150,6 @@
       </section>
     </main>
 
-    <script src="./app.js?v=20260323b"></script>
+    <script src="./app.js?v=20260323c"></script>
   </body>
 </html>

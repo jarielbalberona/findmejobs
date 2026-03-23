@@ -2,7 +2,7 @@
 # Listing page; keep disabled until a source-specific adapter exists.
 name = "virtualstaff-ph-find-jobs"
 kind = "direct_page"
-enabled = false
+enabled = true
 priority = 3
 trust_weight = 0.6
 page_url = "https://www.virtualstaff.ph/en-ph/find-jobs"

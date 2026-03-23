@@ -2,7 +2,7 @@
 # Listing page; keep disabled until adapter support exists for robust extraction.
 name = "jobyoda-home"
 kind = "direct_page"
-enabled = false
+enabled = true
 priority = 3
 trust_weight = 0.6
 page_url = "https://jobyoda.com/"

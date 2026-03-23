@@ -1,8 +1,9 @@
 from __future__ import annotations
 import re
+from html import unescape
 
 from findmejobs.domain.job import CanonicalJob
-from findmejobs.domain.review import ReviewPacketModel
+from findmejobs.domain.review import HTML_TAG_RE, ReviewPacketModel
 from findmejobs.utils.text import truncate_text
 
 MAX_PACKET_BYTES = 16 * 1024
@@ -58,8 +59,11 @@ def _salary_summary(job: CanonicalJob) -> str | None:
 
 
 def sanitize_review_text(value: str) -> str:
+    normalized = value or ""
+    normalized = unescape(normalized)
+    normalized = HTML_TAG_RE.sub("", normalized)
     cleaned_lines: list[str] = []
-    for line in value.splitlines():
+    for line in normalized.splitlines():
         stripped = line.strip()
         if not stripped:
             continue

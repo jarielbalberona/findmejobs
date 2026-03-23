@@ -2,7 +2,7 @@
 # Listing page; keep disabled until a dedicated adapter exists for reliable multi-job extraction.
 name = "onlinejobs-ph-search"
 kind = "direct_page"
-enabled = false
+enabled = true
 priority = 3
 trust_weight = 0.6
 page_url = "https://www.onlinejobs.ph/jobseekers/jobsearch"

@@ -2,7 +2,7 @@
 # Current public page may return anti-bot challenge content to this scraper context.
 name = "jooble-ph-home"
 kind = "direct_page"
-enabled = false
+enabled = true
 priority = 3
 trust_weight = 0.5
 page_url = "https://ph.jooble.org/"

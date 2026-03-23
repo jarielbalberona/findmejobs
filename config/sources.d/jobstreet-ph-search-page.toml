@@ -2,7 +2,7 @@
 # This is a search listing page and will not produce high-quality canonical jobs via direct_page.
 name = "jobstreet-ph-search-page"
 kind = "direct_page"
-enabled = false
+enabled = true
 priority = 3
 trust_weight = 0.6
 page_url = "https://ph.jobstreet.com/jobs"

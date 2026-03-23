@@ -173,6 +173,18 @@ function jobDetailsById() {
   return new Map(Object.entries(jobs));
 }
 
+function configProfile(data) {
+  return data?.config?.summary?.profile || data?.config?.profile || {};
+}
+
+function configApp(data) {
+  return data?.config?.summary?.app || data?.config?.app || {};
+}
+
+function configPaths(data) {
+  return data?.config?.artifacts?.paths || data?.config?.paths || {};
+}
+
 function renderOverview(data) {
   const ranking = data.report?.ranking || {};
   const delivery = data.report?.delivery || {};
@@ -217,8 +229,8 @@ function renderOverview(data) {
 }
 
 function renderProfileAndSettings(data) {
-  const profile = data.config?.profile || {};
-  const app = data.config?.app || {};
+  const profile = configProfile(data);
+  const app = configApp(data);
 
   els.profileGrid.innerHTML = [
     renderKvCard("Identity", profile, ["full_name", "headline", "email", "phone", "location_text", "years_experience"]),
@@ -228,7 +240,7 @@ function renderProfileAndSettings(data) {
   ].join("");
 
   els.settingsGrid.innerHTML = [
-    renderKvCard("Config Paths", data.config?.paths || {}, ["app_config_path", "profile_path", "ranking_path", "sources_path"]),
+    renderKvCard("Config Paths", configPaths(data), ["app_config_path", "profile_path", "ranking_path", "sources_path"]),
     renderKvCard("HTTP", app.http || {}, ["timeout_seconds", "max_attempts", "user_agent"]),
     renderKvCard("Delivery", app.delivery || {}, ["channel", "daily_hour", "digest_max_items"]),
     renderKvCard("Email (non-secret)", app.delivery?.email || {}, ["enabled", "host", "port", "username", "use_tls", "sender", "recipient"]),

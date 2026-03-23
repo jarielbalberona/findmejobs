@@ -393,6 +393,8 @@ Prefer CLI commands over ad hoc scripts.
 
 Expected commands:
 
+- `findmejobs status` (optional `--json` — operational snapshot)
+- `findmejobs onboarding run` / `findmejobs daily-run` (composed workflows; `--json`, `--dry-run`)
 - `findmejobs doctor`
 - `findmejobs profile import --file <path>`
 - `findmejobs profile show-draft`
@@ -404,7 +406,10 @@ Expected commands:
 - `findmejobs sources list` / `findmejobs sources add` / `sources set` / `sources disable` / `sources remove` (validated `sources.yaml` writes)
 - `findmejobs rank`
 - `findmejobs ranking explain` / `findmejobs ranking set` (inspect or patch scalar/list/weights/title-family `ranking.yaml` fields)
-- `findmejobs jobs list` (ranked job previews for the current profile)
+- `findmejobs jobs list` / `findmejobs jobs top` (ranked job previews for the current profile)
+- `findmejobs review queue` (read-only review backlog)
+- `findmejobs applications queue` (read-only application drafting backlog)
+- `findmejobs profile show` / `findmejobs ranking show` (canonical config, optional `--json`)
 - `findmejobs review export` / `findmejobs review import-results` (alias: `review import`)
 - `findmejobs digest send` (and `digest resend` where applicable)
 - `findmejobs report`
@@ -413,6 +418,34 @@ Expected commands:
 - `findmejobs reprocess`
 
 Dry-run modes should exist for destructive or external-output flows where practical.
+
+### OpenClaw operator flow (command-first)
+
+Prefer this sequence when driving the CLI from an assistant:
+
+1. `findmejobs onboarding run --json` (first-time; use `--dry-run` to plan; `--resume-file` only when the operator supplies a path)
+2. `findmejobs status --json`
+3. `findmejobs daily-run --json` (use `--dry-run` to plan; `--send-digest` / `--skip-digest` as needed)
+4. `findmejobs review queue --json`
+5. `findmejobs jobs top --limit 20 --json`
+
+Troubleshooting: `doctor --json`, `config validate --json`, `applications queue --json`, `profile show --json`, `ranking show --json`.
+
+Operator packaging: `skills/findmejobs-ops/SKILL.md` and `skills/findmejobs-ops/flows/`.
+
+### JSON envelope (`--json` on agent-facing commands)
+
+Structured commands emit one object (no extra prose) with stable keys:
+
+- `ok` (boolean)
+- `command` (string; e.g. `rank`, `status`, `daily_run`, `onboarding_run`)
+- `summary` (object; command-specific fields)
+- `warnings` (array of strings)
+- `errors` (array of strings)
+- `artifacts` (object; e.g. `paths`, `ui_export` status for commands that support UI export)
+- `meta` (object; includes `cli_version`, `generated_at`)
+
+Implementation: `src/findmejobs/cli/json_envelope.py`. When UI data export is not requested, `artifacts.ui_export` is still present with `status: skipped` and `message: export_ui_data_not_requested` so agents never have to guess whether the step ran.
 
 ---
 

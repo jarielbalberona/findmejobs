@@ -385,6 +385,7 @@ class CoverLetterDraftRequestModel(BaseModel):
     prompt_version: str
     instructions: str
     model_hints: OpenClawModelHints = Field(default_factory=OpenClawModelHints)
+    signoff_name: str | None = Field(default=None)
     application_packet: ApplicationPacketModel
     output_schema: dict[str, object]
 

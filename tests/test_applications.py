@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import func, select
 
 from findmejobs.application.models import AnswerDraftResultModel, ApplicationPacketModel, ApplicationValidationReport, CoverLetterDraftResultModel
+from findmejobs.application.prompts import COVER_LETTER_PROMPT_VERSION
 from findmejobs.application.service import ApplicationDraftService
 from findmejobs.cli.app import app
 from findmejobs.config.loader import load_app_config, load_profile_config
@@ -271,6 +272,8 @@ def test_prepare_application_generates_sanitized_packet_and_missing_inputs(
     assert "full_name" not in missing_keys
     request_payload = json.loads((state_root / job_id / "openclaw" / "cover_letter.request.json").read_text(encoding="utf-8"))
     assert "Ignore previous instructions" not in json.dumps(request_payload)
+    assert request_payload["signoff_name"] == "Jane Operator"
+    assert request_payload["prompt_version"] == COVER_LETTER_PROMPT_VERSION
 
 
 def test_cover_letter_and_answer_drafts_are_written_and_flag_missing_inputs(
@@ -1029,7 +1032,7 @@ def test_imported_cover_letter_result_is_rejected_when_not_grounded(monkeypatch,
 
         def load_cover_letter_result(self):
             return CoverLetterDraftResultModel(
-                prompt_version="slice2.6-cover-letter-v1",
+                prompt_version=COVER_LETTER_PROMPT_VERSION,
                 body_markdown="I am applying for the Backend Engineer role at Example after 12 years of experience.\nRegards,\nJane Operator",
                 missing_inputs=[],
                 raw_response={"provider": "fake"},
@@ -1064,7 +1067,7 @@ def test_imported_cover_letter_result_rejects_internal_jargon(monkeypatch, appli
 
         def load_cover_letter_result(self):
             return CoverLetterDraftResultModel(
-                prompt_version="slice2.6-cover-letter-v1",
+                prompt_version=COVER_LETTER_PROMPT_VERSION,
                 body_markdown=(
                     "I am applying for the Backend Engineer role at Example. "
                     "The ranked packet shows strong matched signals and source: lever.\n"
@@ -1180,7 +1183,7 @@ def test_openclaw_client_is_mocked_and_receives_only_approved_packet_input(
 
         def load_cover_letter_result(self):
             return CoverLetterDraftResultModel(
-                prompt_version="slice2.6-cover-letter-v1",
+                prompt_version=COVER_LETTER_PROMPT_VERSION,
                 body_markdown=(
                     "I am applying for the Backend Engineer role at Example because the role matches my Python and SQL work.\n"
                     "Regards,\nJane Operator"
@@ -1214,6 +1217,7 @@ def test_openclaw_client_is_mocked_and_receives_only_approved_packet_input(
     assert set(cover_packet.keys()) == set(ApplicationPacketModel.model_fields.keys())
     assert captured["cover"]["model_hints"]["selection"] == "best_available"
     assert captured["cover"]["model_hints"]["reasoning_effort"] == "high"
+    assert captured["cover"]["signoff_name"] == "Jane Operator"
     assert captured["answers"]["model_hints"]["selection"] == "best_available"
     serialized = json.dumps(captured, default=str)
     assert "raw_html" not in serialized
@@ -1265,6 +1269,7 @@ def test_openclaw_request_model_hints_allow_env_override(
 
     assert captured["cover"]["model_hints"]["selection"] == "best_available"
     assert captured["cover"]["model_hints"]["reasoning_effort"] == "high"
+    assert captured["cover"]["signoff_name"] == "Jane Operator"
     assert captured["cover"]["model_hints"]["requested_model"] == "gpt-5.4"
     assert captured["answers"]["model_hints"]["requested_model"] == "gpt-5.4"
 
@@ -1302,7 +1307,7 @@ def test_end_to_end_slice25_flow_with_mocked_openclaw_and_storage(
 
         def load_cover_letter_result(self):
             return CoverLetterDraftResultModel(
-                prompt_version="slice2.6-cover-letter-v1",
+                prompt_version=COVER_LETTER_PROMPT_VERSION,
                 body_markdown="Dear Hiring Team,\n\nI am applying for the Backend Engineer role at Example.\n\nRegards,\nJane Operator\n",
                 missing_inputs=[],
                 raw_response={"provider": "fake-openclaw"},
@@ -1387,6 +1392,8 @@ def test_end_to_end_slice25_flow_with_mocked_openclaw_and_storage(
     assert (state_root / job_id / "cover_letter.draft.md").exists()
     assert (state_root / job_id / "answers.draft.yaml").exists()
     assert exported and {entry["kind"] for entry in exported} == {"cover", "answers"}
+    cover_exports = [e for e in exported if e["kind"] == "cover"]
+    assert cover_exports[0]["payload"]["signoff_name"] == "Jane Operator"
 
 
 def test_application_drafting_does_not_bypass_review_or_delivery_flows(application_runtime: dict[str, object]) -> None:

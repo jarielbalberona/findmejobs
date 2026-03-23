@@ -1,0 +1,37 @@
+{
+  "ok": false,
+  "command": "status",
+  "summary": {
+    "config_valid": true,
+    "profile_ready": true,
+    "ranking_ready": true,
+    "source_ready": true,
+    "enabled_source_count": 1,
+    "review_eligible_job_count": 3,
+    "review_packets_pending_import_count": 0,
+    "review_imported_result_count": 1,
+    "application_draft_pending_count": 0,
+    "latest_ingest": null,
+    "latest_rank": null,
+    "latest_review_export": null,
+    "latest_review_import": null,
+    "latest_digest_send": null
+  },
+  "warnings": ["pipeline_never_succeeded"],
+  "errors": [],
+  "artifacts": {
+    "paths": {
+      "app_config": "/home/op/config/app.toml",
+      "profile": "/home/op/config/profile.yaml",
+      "ranking": "/home/op/config/ranking.yaml",
+      "sources": "/home/op/config/sources.yaml",
+      "review_outbox": "/home/op/var/review/outbox",
+      "review_inbox": "/home/op/var/review/inbox",
+      "applications_state": "/home/op/state/applications"
+    }
+  },
+  "meta": {
+    "cli_version": "0.1.0",
+    "generated_at": "2026-03-23T12:00:00+00:00"
+  }
+}

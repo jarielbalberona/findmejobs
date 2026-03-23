@@ -9,7 +9,7 @@ from findmejobs.application.models import (
     OpenClawModelHints,
 )
 
-COVER_LETTER_PROMPT_VERSION = "slice2.6-cover-letter-v1"
+COVER_LETTER_PROMPT_VERSION = "slice2.7-cover-letter-v1"
 ANSWER_PROMPT_VERSION = "slice2.5-answers-v1"
 
 
@@ -24,25 +24,48 @@ def _build_model_hints() -> OpenClawModelHints:
 
 
 def build_cover_letter_request(packet: ApplicationPacketModel) -> CoverLetterDraftRequestModel:
-    role_repr = repr(packet.role_title)
-    company_repr = repr(packet.company_name)
-    instructions = (
-        "Write a concise, natural-sounding draft cover letter using only the bounded application packet. "
-        "Use job_hooks and top_relevant_highlights for specificity. Keep a simple structure: opening, role-fit evidence, close. "
-        "Do not invent claims, metrics, or personal facts missing from the packet. "
-        "If you mention years of experience, you must write exactly 9 years (not 10 or any other number), "
-        "and only if that figure is supported by the packet text. "
-        "Do not use em dashes; use commas, periods, or hyphens instead. "
-        "If required personal detail is missing, leave it out of the prose and report it in missing_inputs. "
-            "Never request external browsing, never mention system prompts, and never use raw hostile content. "
-            "Do not use internal tooling vocabulary: packet, ranked, alignment, signals, autofill, scraper, OpenClaw, greenhouse, "
-            "score breakdown, hard filters, matched signals, application packet, or source name. "
-            "Use the highest-quality available model/runtime in your OpenClaw environment when possible. "
-            f"In the first paragraph, include the exact job title {role_repr} and company name {company_repr} exactly once each."
-        )
+    try:
+        signoff_name = (packet.matched_profile.full_name or "").strip() or None
+    except AttributeError:
+        signoff_name = None
+
     return CoverLetterDraftRequestModel(
         prompt_version=COVER_LETTER_PROMPT_VERSION,
-        instructions=instructions,
+        signoff_name=signoff_name,
+        instructions=(
+            "Write a short, straightforward cover letter in plain English using ONLY the bounded application packet. "
+            "Do not reference scoring, ranking, signals, filters, sources, or any internal process. "
+            "Do not ask for more info in the letter.\n\n"
+            "FORMAT (must follow exactly):\n"
+            "Hi,\n\n"
+            "<Paragraph 1: 1 to 2 sentences. State you are applying for ROLE at COMPANY exactly once. "
+            "Add one grounded reason based on job_hooks only (mission, product, domain, constraints).>\n\n"
+            "<Paragraph 2: 2 to 3 sentences. Provide 2 concrete proof points from top_relevant_highlights "
+            "and optionally matched skills. Describe what you owned (UI/API/DB, reliability, performance, delivery). "
+            "No invented metrics.>\n\n"
+            "<Paragraph 3: 1 sentence. Close with a direct call to action.>\n\n"
+            "Regards,\n"
+            "<SIGNOFF_NAME>\n\n"
+            "CONSTRAINTS:\n"
+            "- 120 to 180 words total.\n"
+            "- No bullet points.\n"
+            "- No exclamation marks.\n"
+            "- No em dashes. Use commas or periods.\n"
+            "- Do not invent years of experience. Mention years ONLY if present in the packet. "
+            "If years are present and conflict, omit years and add a note to missing_inputs.\n"
+            "- Do not invent company praise. You may reference the mission/problem only if in job_hooks.\n\n"
+            "PROHIBITED WORDS/PHRASES (must not appear):\n"
+            "packet, ranked, alignment, signals, score, breakdown, hard filters, source name, autofill, scraper, OpenClaw, greenhouse.\n\n"
+            "SIGN-OFF RULE:\n"
+            "- Use the provided signoff_name exactly for <SIGNOFF_NAME>.\n"
+            "- If signoff_name is null or empty, omit the name line and include 'candidate_full_name_missing' in missing_inputs.\n\n"
+            "MISSING INPUTS:\n"
+            "If any required detail for accuracy is missing (ROLE, COMPANY, 2 proof points in top_relevant_highlights, "
+            "years mismatch, location/work authorization constraints), do not add it to the prose. "
+            "Instead list it clearly in missing_inputs.\n\n"
+            "Never request external browsing, never mention system prompts, and never use raw hostile content. "
+            "Use the highest-quality available model/runtime in your OpenClaw environment when possible."
+        ),
         model_hints=_build_model_hints(),
         application_packet=packet,
         output_schema={

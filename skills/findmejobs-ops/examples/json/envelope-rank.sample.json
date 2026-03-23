@@ -1,0 +1,28 @@
+{
+  "ok": true,
+  "command": "rank",
+  "summary": {
+    "scored": 12,
+    "total_scored": 12,
+    "filtered": 2,
+    "passed_hard_filters": 10,
+    "below_minimum": 1,
+    "model_version": "v1",
+    "hard_filter_reason_counts": {
+      "not_remote": 2
+    }
+  },
+  "warnings": [],
+  "errors": [],
+  "artifacts": {
+    "ui_export": {
+      "status": "skipped",
+      "message": "export_ui_data_not_requested",
+      "script_path": null
+    }
+  },
+  "meta": {
+    "cli_version": "0.1.0",
+    "generated_at": "2026-03-23T12:00:00+00:00"
+  }
+}

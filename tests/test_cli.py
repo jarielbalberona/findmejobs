@@ -490,11 +490,14 @@ def test_jobs_list_json_mode(
     )
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["meta"]["filter"] == "review_eligible"
-    assert payload["meta"]["hint"] is None  # non-empty result: no empty-state hint
-    assert len(payload["jobs"]) == 1
-    assert payload["jobs"][0]["job_id"] == "job-valid"
-    assert payload["jobs"][0]["status"] == "eligible"
+    assert payload["command"] == "jobs_list"
+    assert payload["ok"] is True
+    s = payload["summary"]
+    assert s["filter"] == "review_eligible"
+    assert s["hint"] is None  # non-empty result: no empty-state hint
+    assert len(s["jobs"]) == 1
+    assert s["jobs"][0]["job_id"] == "job-valid"
+    assert s["jobs"][0]["status"] == "eligible"
 
 
 def test_jobs_list_all_scored_includes_hard_filtered(
@@ -545,8 +548,8 @@ def test_jobs_list_all_scored_includes_hard_filtered(
     )
     assert json_default.exit_code == 0
     jd = json.loads(json_default.stdout)
-    assert jd["jobs"] == []
-    assert jd["meta"]["hint"] is not None
+    assert jd["summary"]["jobs"] == []
+    assert jd["summary"]["hint"] is not None
 
     empty = cli_runner.invoke(
         app,
@@ -599,9 +602,9 @@ def test_jobs_list_all_scored_includes_hard_filtered(
     )
     assert json_all.exit_code == 0
     pj = json.loads(json_all.stdout)
-    assert pj["meta"]["filter"] == "all_scored"
-    assert pj["meta"]["hint"] is None
-    assert len(pj["jobs"]) >= 1
+    assert pj["summary"]["filter"] == "all_scored"
+    assert pj["summary"]["hint"] is None
+    assert len(pj["summary"]["jobs"]) >= 1
 
 
 def test_rank_command_prints_hard_filter_reason_summary(
@@ -777,10 +780,13 @@ def test_ranking_explain_json_includes_catalog(tmp_path: Path, cli_runner) -> No
     result = cli_runner.invoke(app, ["ranking", "explain", "--json", "--profile-path", str(profile_path)])
     assert result.exit_code == 0
     data = json.loads(result.stdout)
-    assert data["rank_model_version"] == "bootstrap-v1"
-    assert any(r["reason"] == "blocked_company" for r in data["hard_filter_rules"])
-    assert any(c["component"] == "title_alignment" for c in data["score_components"])
-    assert data["ranking_policy"]["minimum_score"] == 45.0
+    assert data["command"] == "ranking_explain"
+    assert data["ok"] is True
+    inner = data["summary"]
+    assert inner["rank_model_version"] == "bootstrap-v1"
+    assert any(r["reason"] == "blocked_company" for r in inner["hard_filter_rules"])
+    assert any(c["component"] == "title_alignment" for c in inner["score_components"])
+    assert inner["ranking_policy"]["minimum_score"] == 45.0
 
 
 def test_ranking_set_updates_stale_days(tmp_path: Path, cli_runner) -> None:
@@ -875,11 +881,11 @@ def test_doctor_json_includes_hints_for_setup_errors(
     assert result.exit_code == 1
     payload = json.loads(result.stdout)
     assert payload["command"] == "doctor"
-    assert payload["status"] == "failed"
+    assert payload["ok"] is False
     assert "no_enabled_sources" in payload["errors"]
-    assert "hints" in payload
-    assert "no_enabled_sources" in payload["hints"]
-    assert "ingest" in payload["hints"]["no_enabled_sources"].lower()
+    assert "hints" in payload["summary"]
+    assert "no_enabled_sources" in payload["summary"]["hints"]
+    assert "ingest" in payload["summary"]["hints"]["no_enabled_sources"].lower()
 
 
 def test_doctor_command_reports_stale_pipeline_and_repeated_source_failures(
@@ -1005,9 +1011,11 @@ def test_sources_list_json(tmp_path: Path, cli_runner) -> None:
     result = cli_runner.invoke(app, ["sources", "list", "--sources-path", str(sources_path), "--json"])
     assert result.exit_code == 0
     data = json.loads(result.stdout)
-    assert len(data["sources"]) == 1
-    assert data["sources"][0]["name"] == "x"
-    assert data["sources"][0]["kind"] == "rss"
+    assert data["command"] == "sources_list"
+    assert data["ok"] is True
+    assert len(data["summary"]["sources"]) == 1
+    assert data["summary"]["sources"][0]["name"] == "x"
+    assert data["summary"]["sources"][0]["kind"] == "rss"
 
 
 def test_sources_add_requires_json_xor_file(tmp_path: Path, cli_runner) -> None:
@@ -1054,7 +1062,7 @@ def test_config_init_validate_and_show_effective_json(tmp_path: Path, cli_runner
     assert init_result.exit_code == 0
     init_payload = json.loads(init_result.stdout)
     assert init_payload["command"] == "config_init"
-    assert init_payload["status"] == "ok"
+    assert init_payload["ok"] is True
     assert (config_root / "sources.yaml").exists()
 
     validate_result = cli_runner.invoke(
@@ -1074,7 +1082,7 @@ def test_config_init_validate_and_show_effective_json(tmp_path: Path, cli_runner
     assert validate_result.exit_code == 0
     validate_payload = json.loads(validate_result.stdout)
     assert validate_payload["command"] == "config_validate"
-    assert validate_payload["status"] == "ok"
+    assert validate_payload["ok"] is True
     assert validate_payload["summary"]["source_count"] == 0
 
     effective_result = cli_runner.invoke(
@@ -1094,8 +1102,8 @@ def test_config_init_validate_and_show_effective_json(tmp_path: Path, cli_runner
     assert effective_result.exit_code == 0
     effective_payload = json.loads(effective_result.stdout)
     assert effective_payload["command"] == "config_show_effective"
-    assert effective_payload["status"] == "ok"
-    assert effective_payload["sources"] == []
+    assert effective_payload["ok"] is True
+    assert effective_payload["summary"]["sources"] == []
 
 
 def test_sources_set_disable_remove_json(tmp_path: Path, cli_runner) -> None:
@@ -1205,7 +1213,7 @@ def test_critical_commands_emit_parseable_json(
     assert ingest_result.exit_code == 0
     ingest_payload = json.loads(ingest_result.stdout)
     assert ingest_payload["command"] == "ingest"
-    assert ingest_payload["status"] == "ok"
+    assert ingest_payload["ok"] is True
 
     doctor_result = cli_runner.invoke(
         app,
@@ -1223,7 +1231,7 @@ def test_critical_commands_emit_parseable_json(
     assert doctor_result.exit_code == 0
     doctor_payload = json.loads(doctor_result.stdout)
     assert doctor_payload["command"] == "doctor"
-    assert doctor_payload["status"] == "ok"
+    assert doctor_payload["ok"] is True
 
     rank_result = cli_runner.invoke(
         app,
@@ -1241,7 +1249,8 @@ def test_critical_commands_emit_parseable_json(
     assert rank_result.exit_code == 0
     rank_payload = json.loads(rank_result.stdout)
     assert rank_payload["command"] == "rank"
-    assert rank_payload["status"] == "ok"
+    assert rank_payload["ok"] is True
+    assert rank_payload["artifacts"]["ui_export"]["status"] == "skipped"
 
     export_result = cli_runner.invoke(
         app,
@@ -1260,7 +1269,8 @@ def test_critical_commands_emit_parseable_json(
     assert export_result.exit_code == 0
     export_payload = json.loads(export_result.stdout)
     assert export_payload["command"] == "review_export"
-    assert export_payload["status"] == "ok"
+    assert export_payload["ok"] is True
+    assert export_payload["artifacts"]["ui_export"]["status"] == "skipped"
 
     import_result = cli_runner.invoke(
         app,
@@ -1279,7 +1289,8 @@ def test_critical_commands_emit_parseable_json(
     assert import_result.exit_code == 0
     import_payload = json.loads(import_result.stdout)
     assert import_payload["command"] == "review_import"
-    assert import_payload["status"] == "ok"
+    assert import_payload["ok"] is True
+    assert import_payload["artifacts"]["ui_export"]["status"] == "skipped"
 
     validate_result = cli_runner.invoke(
         app,
@@ -1298,7 +1309,7 @@ def test_critical_commands_emit_parseable_json(
     assert validate_result.exit_code == 0
     validate_payload = json.loads(validate_result.stdout)
     assert validate_payload["command"] == "config_validate"
-    assert validate_payload["status"] == "ok"
+    assert validate_payload["ok"] is True
 
     show_effective_result = cli_runner.invoke(
         app,
@@ -1317,7 +1328,7 @@ def test_critical_commands_emit_parseable_json(
     assert show_effective_result.exit_code == 0
     show_effective_payload = json.loads(show_effective_result.stdout)
     assert show_effective_payload["command"] == "config_show_effective"
-    assert show_effective_payload["status"] == "ok"
+    assert show_effective_payload["ok"] is True
 
     digest_send_result = cli_runner.invoke(
         app,
@@ -1339,7 +1350,9 @@ def test_critical_commands_emit_parseable_json(
     assert digest_send_result.exit_code == 0
     digest_send_payload = json.loads(digest_send_result.stdout)
     assert digest_send_payload["command"] == "digest_send"
-    assert digest_send_payload["status"] == "ok"
+    assert digest_send_payload["ok"] is True
+    assert digest_send_payload["summary"]["dry_run"] is True
+    assert digest_send_payload["artifacts"]["ui_export"]["status"] == "skipped"
 
     digest_resend_result = cli_runner.invoke(
         app,
@@ -1361,7 +1374,9 @@ def test_critical_commands_emit_parseable_json(
     assert digest_resend_result.exit_code == 0
     digest_resend_payload = json.loads(digest_resend_result.stdout)
     assert digest_resend_payload["command"] == "digest_resend"
-    assert digest_resend_payload["status"] == "ok"
+    assert digest_resend_payload["ok"] is True
+    assert digest_resend_payload["summary"]["dry_run"] is True
+    assert digest_resend_payload["artifacts"]["ui_export"]["status"] == "skipped"
 
 
 def test_ranking_audit_command_supports_pass_and_fail(cli_runner, tmp_path: Path) -> None:

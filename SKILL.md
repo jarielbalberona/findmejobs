@@ -10,12 +10,9 @@ Use this skill when the user wants OpenClaw to operate the local `findmejobs` jo
 
 This is a local operator skill. OpenClaw is the chat interface and execution layer. The Python app remains the system of record.
 
-Deterministic flow templates live under:
-- `skills/flows/onboarding.md`
-- `skills/flows/profile-bootstrap.md`
-- `skills/flows/source-setup.md`
-- `skills/flows/daily-ops.md`
-- `skills/flows/troubleshoot.md`
+**Prefer the packaged operator skill:** `skills/findmejobs-ops/SKILL.md` with runbooks under `skills/findmejobs-ops/flows/` and examples under `skills/findmejobs-ops/examples/`.
+
+Legacy flow notes also exist under `skills/flows/` (onboarding, profile-bootstrap, source-setup, daily-ops, troubleshoot).
 
 ## Purpose
 
@@ -47,16 +44,16 @@ If you encounter raw source artifacts where only sanitized review material shoul
 
 When the user asks to scan jobs, check health first, then run the real CLI flow, then summarize the result back into chat.
 
-When the user asks for a routine scan, use this default sequence:
+When the user asks for a routine scan, prefer **`--json`** and this sequence:
 
-1. Run `doctor`. If it fails with `no_enabled_sources` or `pipeline_never_succeeded`, explain from the command output (text **Why / what to do** section, or `--json` → `hints`): those usually mean the DB is still empty of enabled sources and/or no pipeline step has succeeded yet—normal during setup until after at least `sources add` and a successful `ingest`. Do not treat that as a broken install by default.
-2. If the user asked to add a feed/source, run `sources add` with a validated JSON object (see `findmejobs sources add --help`) or `sources list` to confirm current sources.
-3. Run `ingest`.
-4. Run `rank`.
-5. Run `review export`.
-6. If the user asked to import completed review results, run `review import-results`.
-7. If the user explicitly asked to send or resend a digest, run the appropriate `digest` subcommand.
-8. Run `report` when a rollup is useful.
+1. `findmejobs status --json` (or `doctor --json`) for readiness. If `doctor` fails with `no_enabled_sources` or `pipeline_never_succeeded`, use `summary.hints` in JSON or the text **Why / what to do** section—normal until after `sources add` and a successful `ingest`.
+2. For first-time setup, `findmejobs onboarding run --json` (optional `--dry-run`, optional `--resume-file`).
+3. For daily operation, `findmejobs daily-run --json` (optional `--dry-run`, `--send-digest` / `--skip-digest`).
+4. If stepping manually: `sources list --json` → `ingest --json` → `rank --json` → `review export --json`.
+5. `review import-results --json` when importing OpenClaw results.
+6. `digest send --json` / `digest resend --json` only when requested (or when `daily-run` is configured to send).
+7. `report` when a rollup is useful (text/JSON as implemented).
+8. Use `review queue --json`, `jobs top --limit 20 --json`, `applications queue --json` instead of reading SQLite or disk ad hoc.
 
 When the user asks for a narrower action, run only the relevant command instead of the full flow.
 

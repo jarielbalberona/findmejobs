@@ -454,7 +454,9 @@ findmejobs apply browser-run --job-id <job_id> --backend playwright --json
 
 Optional browser session routing:
 
+- if `--browser-executable-path` is omitted, `findmejobs` tries to use the OS default browser and falls back to Playwright Chromium with a warning if it cannot resolve one
 - `--browser-profile-dir /path/to/chromium-profile`
+- `--browser-executable-path /Applications/Brave Browser.app/Contents/MacOS/Brave Browser`
 - `--leave-open` (default) or `--close-browser`
 - `--request-file /path/to/browser.request.json`
 

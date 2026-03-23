@@ -18,6 +18,7 @@ from sqlalchemy import select
 
 from findmejobs.application.service import ApplicationDraftService
 from findmejobs.apply.browser import ApplyBrowserRunner, build_browser_backend
+from findmejobs.apply.playwright_backend import resolve_browser_launch_choice
 from findmejobs.apply.service import ApplySessionService
 from findmejobs.apply.openclaw import FilesystemApplyOpenClawClient
 from findmejobs.config.loader import ensure_directories, load_app_config, load_profile_config, load_source_configs, resolve_profile_config_path
@@ -2391,6 +2392,7 @@ def apply_browser_run(
     apply_state_root: Path = typer.Option(Path("state/apply_sessions")),
     backend: str = typer.Option("playwright", "--backend"),
     browser_profile_dir: Path | None = typer.Option(None, "--browser-profile-dir", dir_okay=True, file_okay=False),
+    browser_executable_path: Path | None = typer.Option(None, "--browser-executable-path", exists=True, dir_okay=False),
     leave_open: bool = typer.Option(True, "--leave-open/--close-browser"),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
@@ -2407,8 +2409,14 @@ def apply_browser_run(
                 job_id = request_root.parent.name
         client = FilesystemApplyOpenClawClient(request_root)
         request = client.load_browser_request()
+        launch_choice = resolve_browser_launch_choice(browser_executable_path)
         runner = ApplyBrowserRunner(build_browser_backend(backend))
-        result = runner.run(request, browser_profile_dir=browser_profile_dir, leave_open_for_review=leave_open)
+        result = runner.run(
+            request,
+            browser_profile_dir=browser_profile_dir,
+            browser_executable_path=launch_choice.executable_path,
+            leave_open_for_review=leave_open,
+        )
         client.export_browser_result(result)
     except Exception as exc:
         _emit_standard_envelope(json_out, "apply_browser_run", False, errors=[str(exc)], text=f"apply browser-run failed: {exc}")
@@ -2418,7 +2426,13 @@ def apply_browser_run(
         "apply_browser_run",
         True,
         summary=result.model_dump(mode="json"),
-        artifacts={"browser_result": str((request_root / "browser.result.json").resolve()), "browser_left_open": leave_open},
+        warnings=[launch_choice.warning] if launch_choice.warning else [],
+        artifacts={
+            "browser_result": str((request_root / "browser.result.json").resolve()),
+            "browser_left_open": leave_open,
+            "browser_executable_path": str(launch_choice.executable_path) if launch_choice.executable_path is not None else None,
+            "browser_source": launch_choice.source,
+        },
         text=f"apply browser-run complete: job_id={request.job_id} step={result.step_label} submit_available={result.submit_available}",
     )
 

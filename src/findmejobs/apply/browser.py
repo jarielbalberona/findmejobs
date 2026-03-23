@@ -36,7 +36,14 @@ class BrowserStepSnapshot:
 
 
 class BrowserBackend(Protocol):
-    def open(self, *, url: str, browser_profile: str | None = None, browser_profile_dir: Path | None = None) -> BrowserStepSnapshot: ...
+    def open(
+        self,
+        *,
+        url: str,
+        browser_profile: str | None = None,
+        browser_profile_dir: Path | None = None,
+        browser_executable_path: Path | None = None,
+    ) -> BrowserStepSnapshot: ...
     def fill(self, field: BrowserField, value: str) -> None: ...
     def upload(self, field: BrowserField, file_path: Path) -> None: ...
     def click_next(self, label: str | None = None) -> BrowserStepSnapshot: ...
@@ -70,6 +77,7 @@ class ApplyBrowserRunner:
         request: ApplyBrowserRequest,
         *,
         browser_profile_dir: Path | None = None,
+        browser_executable_path: Path | None = None,
         leave_open_for_review: bool = True,
     ) -> ApplyBrowserResult:
         filled_fields: list[ApplyFieldAction] = []
@@ -81,6 +89,7 @@ class ApplyBrowserRunner:
             url=request.apply_url,
             browser_profile=request.browser_profile,
             browser_profile_dir=browser_profile_dir,
+            browser_executable_path=browser_executable_path,
         )
         try:
             while True:

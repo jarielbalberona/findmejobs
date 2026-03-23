@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import plistlib
+import subprocess
 
 import pytest
 
 from findmejobs.apply.browser import ApplyBrowserRunner, BrowserField, BrowserStepSnapshot
 from findmejobs.apply.models import ApplyBrowserResult
 from findmejobs.apply.openclaw import FilesystemApplyOpenClawClient
+from findmejobs.apply.playwright_backend import resolve_browser_launch_choice
 from findmejobs.apply.service import ApplySessionService
 from findmejobs.application.service import ApplicationDraftService
 from findmejobs.cli.app import app
@@ -241,13 +244,22 @@ class _FakeBrowserBackend:
         self.fills: list[tuple[str, str]] = []
         self.uploads: list[tuple[str, str]] = []
         self.opened: list[str] = []
+        self.executable_paths: list[str | None] = []
         self.next_clicks: list[str | None] = []
         self.closed = False
 
-    def open(self, *, url: str, browser_profile: str | None = None, browser_profile_dir: Path | None = None) -> BrowserStepSnapshot:
+    def open(
+        self,
+        *,
+        url: str,
+        browser_profile: str | None = None,
+        browser_profile_dir: Path | None = None,
+        browser_executable_path: Path | None = None,
+    ) -> BrowserStepSnapshot:
         _ = browser_profile
         _ = browser_profile_dir
         self.opened.append(url)
+        self.executable_paths.append(str(browser_executable_path) if browser_executable_path is not None else None)
         return self.snapshots[self.index]
 
     def fill(self, field: BrowserField, value: str) -> None:
@@ -1233,6 +1245,78 @@ def test_browser_runner_can_close_browser_when_requested(apply_runtime: dict[str
     assert backend.closed is True
 
 
+def test_browser_runner_passes_browser_executable_path_to_backend(apply_runtime: dict[str, object], tmp_path: Path) -> None:
+    with apply_runtime["session_factory"]() as session:
+        job_id = _seed_apply_job(session, apply_runtime["profile"], seed_key="runner-brave-path")
+    service = ApplySessionService(
+        application_state_root=apply_runtime["application_state_root"],
+        apply_state_root=apply_runtime["apply_state_root"],
+    )
+    _prepare_application(service, apply_runtime, job_id=job_id)
+    with apply_runtime["session_factory"]() as session:
+        service.open_session(session, apply_runtime["profile"], job_id=job_id, mode="guided")
+    request = FilesystemApplyOpenClawClient(apply_runtime["apply_state_root"] / job_id / "openclaw").load_browser_request()
+    backend = _FakeBrowserBackend(
+        [
+            BrowserStepSnapshot(
+                step_id="brave-path-step",
+                step_label="Brave path",
+                page_url=request.apply_url,
+                parse_confidence=0.95,
+                fields=[],
+            )
+        ]
+    )
+    executable_path = tmp_path / "Brave Browser"
+    executable_path.write_text("", encoding="utf-8")
+    ApplyBrowserRunner(backend).run(request, browser_executable_path=executable_path)
+    assert backend.executable_paths == [str(executable_path)]
+
+
+def test_resolve_browser_launch_choice_prefers_explicit_path(tmp_path: Path) -> None:
+    executable_path = tmp_path / "Brave Browser"
+    executable_path.write_text("", encoding="utf-8")
+    choice = resolve_browser_launch_choice(executable_path)
+    assert choice.executable_path == executable_path.resolve()
+    assert choice.source == "explicit"
+    assert choice.warning is None
+
+
+def test_resolve_browser_launch_choice_uses_macos_default_browser(monkeypatch, tmp_path: Path) -> None:
+    app_bundle = tmp_path / "Brave Browser.app"
+    executable_dir = app_bundle / "Contents" / "MacOS"
+    executable_dir.mkdir(parents=True)
+    plist_path = app_bundle / "Contents" / "Info.plist"
+    plist_path.parent.mkdir(parents=True, exist_ok=True)
+    executable_path = executable_dir / "Brave Browser"
+    executable_path.write_text("", encoding="utf-8")
+    with plist_path.open("wb") as handle:
+        plistlib.dump({"CFBundleExecutable": "Brave Browser"}, handle)
+
+    monkeypatch.setattr("findmejobs.apply.playwright_backend.platform.system", lambda: "Darwin")
+
+    def fake_run(argv, capture_output, text, check):
+        assert argv == ["/usr/bin/osascript", "-e", "POSIX path of (path to default web browser)"]
+        assert capture_output is True
+        assert text is True
+        assert check is True
+        return subprocess.CompletedProcess(argv, 0, stdout=str(app_bundle) + "\n", stderr="")
+
+    monkeypatch.setattr("findmejobs.apply.playwright_backend.subprocess.run", fake_run)
+    choice = resolve_browser_launch_choice(None)
+    assert choice.executable_path == executable_path
+    assert choice.source == "system_default"
+    assert choice.warning is None
+
+
+def test_resolve_browser_launch_choice_falls_back_to_playwright_chromium(monkeypatch) -> None:
+    monkeypatch.setattr("findmejobs.apply.playwright_backend.platform.system", lambda: "Windows")
+    choice = resolve_browser_launch_choice(None)
+    assert choice.executable_path is None
+    assert choice.source == "playwright_chromium"
+    assert choice.warning == "default_browser_not_resolved_using_playwright_chromium"
+
+
 def test_browser_runner_blocks_conflicting_prefilled_value_with_approval_gate(apply_runtime: dict[str, object]) -> None:
     with apply_runtime["session_factory"]() as session:
         job_id = _seed_apply_job(session, apply_runtime["profile"], seed_key="runner-conflict")
@@ -1429,6 +1513,162 @@ def test_apply_browser_run_cli_writes_real_browser_result_with_mocked_backend(cl
     )
     assert browser_result["step_id"] == "cli-step"
     assert browser_result["filled_fields"][0]["field_key"] == "full_name"
+
+
+def test_apply_browser_run_cli_passes_browser_executable_path(cli_runner, apply_runtime: dict[str, object], monkeypatch, tmp_path: Path) -> None:
+    with apply_runtime["session_factory"]() as session:
+        job_id = _seed_apply_job(session, apply_runtime["profile"], seed_key="browser-cli-brave")
+    service = ApplySessionService(
+        application_state_root=apply_runtime["application_state_root"],
+        apply_state_root=apply_runtime["apply_state_root"],
+    )
+    _prepare_application(service, apply_runtime, job_id=job_id)
+    with apply_runtime["session_factory"]() as session:
+        service.open_session(session, apply_runtime["profile"], job_id=job_id, mode="guided")
+    backend = _FakeBrowserBackend(
+        [
+            BrowserStepSnapshot(
+                step_id="cli-brave-step",
+                step_label="CLI Brave form",
+                page_url="https://jobs.example.test/cli-brave",
+                parse_confidence=0.9,
+                fields=[],
+            )
+        ]
+    )
+    monkeypatch.setattr("findmejobs.cli.app.build_browser_backend", lambda backend_name: backend)
+    executable_path = tmp_path / "Brave Browser"
+    executable_path.write_text("", encoding="utf-8")
+    result = cli_runner.invoke(
+        app,
+        [
+            "apply",
+            "browser-run",
+            "--job-id",
+            job_id,
+            "--apply-state-root",
+            str(apply_runtime["apply_state_root"]),
+            "--backend",
+            "playwright",
+            "--browser-executable-path",
+            str(executable_path),
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    _assert_envelope(payload, command="apply_browser_run")
+    assert backend.executable_paths == [str(executable_path)]
+    assert payload["artifacts"]["browser_executable_path"] == str(executable_path.resolve())
+    assert payload["artifacts"]["browser_source"] == "explicit"
+
+
+def test_apply_browser_run_cli_uses_system_default_browser_when_available(cli_runner, apply_runtime: dict[str, object], monkeypatch, tmp_path: Path) -> None:
+    with apply_runtime["session_factory"]() as session:
+        job_id = _seed_apply_job(session, apply_runtime["profile"], seed_key="browser-cli-default")
+    service = ApplySessionService(
+        application_state_root=apply_runtime["application_state_root"],
+        apply_state_root=apply_runtime["apply_state_root"],
+    )
+    _prepare_application(service, apply_runtime, job_id=job_id)
+    with apply_runtime["session_factory"]() as session:
+        service.open_session(session, apply_runtime["profile"], job_id=job_id, mode="guided")
+    backend = _FakeBrowserBackend(
+        [
+            BrowserStepSnapshot(
+                step_id="cli-default-step",
+                step_label="CLI Default form",
+                page_url="https://jobs.example.test/cli-default",
+                parse_confidence=0.9,
+                fields=[],
+            )
+        ]
+    )
+    monkeypatch.setattr("findmejobs.cli.app.build_browser_backend", lambda backend_name: backend)
+    default_executable = tmp_path / "Default Browser"
+    default_executable.write_text("", encoding="utf-8")
+    monkeypatch.setattr(
+        "findmejobs.cli.app.resolve_browser_launch_choice",
+        lambda path: type("Choice", (), {"executable_path": default_executable, "source": "system_default", "warning": None})(),
+    )
+    result = cli_runner.invoke(
+        app,
+        [
+            "apply",
+            "browser-run",
+            "--job-id",
+            job_id,
+            "--apply-state-root",
+            str(apply_runtime["apply_state_root"]),
+            "--backend",
+            "playwright",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    _assert_envelope(payload, command="apply_browser_run")
+    assert backend.executable_paths == [str(default_executable)]
+    assert payload["artifacts"]["browser_executable_path"] == str(default_executable)
+    assert payload["artifacts"]["browser_source"] == "system_default"
+    assert payload["warnings"] == []
+
+
+def test_apply_browser_run_cli_warns_when_falling_back_to_playwright_chromium(cli_runner, apply_runtime: dict[str, object], monkeypatch) -> None:
+    with apply_runtime["session_factory"]() as session:
+        job_id = _seed_apply_job(session, apply_runtime["profile"], seed_key="browser-cli-fallback")
+    service = ApplySessionService(
+        application_state_root=apply_runtime["application_state_root"],
+        apply_state_root=apply_runtime["apply_state_root"],
+    )
+    _prepare_application(service, apply_runtime, job_id=job_id)
+    with apply_runtime["session_factory"]() as session:
+        service.open_session(session, apply_runtime["profile"], job_id=job_id, mode="guided")
+    backend = _FakeBrowserBackend(
+        [
+            BrowserStepSnapshot(
+                step_id="cli-fallback-step",
+                step_label="CLI fallback form",
+                page_url="https://jobs.example.test/cli-fallback",
+                parse_confidence=0.9,
+                fields=[],
+            )
+        ]
+    )
+    monkeypatch.setattr("findmejobs.cli.app.build_browser_backend", lambda backend_name: backend)
+    monkeypatch.setattr(
+        "findmejobs.cli.app.resolve_browser_launch_choice",
+        lambda path: type(
+            "Choice",
+            (),
+            {
+                "executable_path": None,
+                "source": "playwright_chromium",
+                "warning": "default_browser_not_resolved_using_playwright_chromium",
+            },
+        )(),
+    )
+    result = cli_runner.invoke(
+        app,
+        [
+            "apply",
+            "browser-run",
+            "--job-id",
+            job_id,
+            "--apply-state-root",
+            str(apply_runtime["apply_state_root"]),
+            "--backend",
+            "playwright",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    _assert_envelope(payload, command="apply_browser_run")
+    assert backend.executable_paths == [None]
+    assert payload["artifacts"]["browser_executable_path"] is None
+    assert payload["artifacts"]["browser_source"] == "playwright_chromium"
+    assert payload["warnings"] == ["default_browser_not_resolved_using_playwright_chromium"]
 
 
 def test_manual_submit_does_not_override_pending_approvals_in_status(apply_runtime: dict[str, object]) -> None:

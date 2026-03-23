@@ -38,12 +38,12 @@ class SmartRecruitersAdapter(SourceAdapter):
                     title=title,
                     company=_company_name(posting, config.company_name),
                     location_text=location_text,
-                    posted_at_raw=posting.get("releasedDate"),
-                    employment_type_raw=posting.get("typeOfEmployment"),
+                    posted_at_raw=_text_value(posting.get("releasedDate")),
+                    employment_type_raw=_text_value(posting.get("typeOfEmployment")),
                     description_raw=posting.get("jobAd", {}).get("sections", {}).get("jobDescription", {}).get("text")
                     if isinstance(posting.get("jobAd"), dict)
                     else None,
-                    tags_raw=[value for value in [department.get("label"), posting.get("typeOfEmployment")] if value],
+                    tags_raw=_tags(posting, department),
                     raw_payload=posting,
                 )
             )
@@ -62,3 +62,34 @@ def _company_name(posting: dict, configured_company_name: str | None) -> str:
         if value:
             return value
     return configured_company_name or "Unknown"
+
+
+def _tags(posting: dict, department: dict) -> list[str]:
+    tags: list[str] = []
+    for value in (department.get("label"), posting.get("typeOfEmployment"), posting.get("tags")):
+        tags.extend(_list_text(value))
+    return tags
+
+
+def _list_text(value: object) -> list[str]:
+    if isinstance(value, list):
+        tags: list[str] = []
+        for item in value:
+            text = _text_value(item)
+            if text:
+                tags.append(text)
+        return tags
+    text = _text_value(value)
+    return [text] if text else []
+
+
+def _text_value(value: object) -> str | None:
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    if isinstance(value, dict):
+        for key in ("label", "name", "value", "text"):
+            text = _text_value(value.get(key))
+            if text:
+                return text
+    return None

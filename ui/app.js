@@ -185,6 +185,18 @@ function configPaths(data) {
   return data?.config?.artifacts?.paths || data?.config?.paths || {};
 }
 
+function rankingSummary(data) {
+  return data?.ranking?.summary || data?.ranking || {};
+}
+
+function sourcesSummary(data) {
+  return data?.sources?.summary || data?.sources || {};
+}
+
+function jobsSummary(data) {
+  return data?.jobs?.summary || data?.jobs || {};
+}
+
 function renderOverview(data) {
   const ranking = data.report?.ranking || {};
   const delivery = data.report?.delivery || {};
@@ -248,14 +260,15 @@ function renderProfileAndSettings(data) {
 }
 
 function renderRanking(data) {
-  const policy = data.ranking?.ranking_policy || {};
-  const reviewGate = data.ranking?.review_eligibility || {};
+  const summary = rankingSummary(data);
+  const policy = summary?.ranking_policy || {};
+  const reviewGate = summary?.review_eligibility || {};
 
   els.rankingPolicy.innerHTML = [
     renderKvCard("Policy", policy, ["stale_days", "minimum_score", "minimum_salary", "require_remote", "remote_first"]),
     renderKvCard("Review Eligibility", reviewGate, ["minimum_score", "must_pass_hard_filters", "note"]),
     renderKvCard("Preference Lists", policy, ["blocked_companies", "blocked_title_keywords", "allowed_companies", "preferred_companies", "preferred_timezones"]),
-    renderKvCard("Scoring Inputs", data.ranking?.profile_fields_for_scoring || {}, ["target_titles", "required_skills", "preferred_skills", "preferred_locations"]),
+    renderKvCard("Scoring Inputs", summary?.profile_fields_for_scoring || {}, ["target_titles", "required_skills", "preferred_skills", "preferred_locations"]),
   ].join("");
 
   const weights = policy.weights || {};
@@ -289,7 +302,7 @@ function renderRanking(data) {
 
 function renderSources(data) {
   const reportSources = data.report?.sources || [];
-  const configSources = (data.sources?.sources || []).map((s) => s.name);
+  const configSources = (sourcesSummary(data)?.sources || []).map((s) => s.name);
 
   const rows = reportSources
     .map((s) => {
@@ -339,7 +352,7 @@ function populateSourceFilter(sourceNames) {
 }
 
 function renderJobs(data) {
-  state.jobs = data.jobs?.jobs || [];
+  state.jobs = jobsSummary(data)?.jobs || [];
   applyJobFilters();
 }
 

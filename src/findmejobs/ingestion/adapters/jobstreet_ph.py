@@ -19,7 +19,7 @@ class JobStreetPHAdapter(SourceAdapter):
 
     def parse_with_stats(self, artifact: FetchArtifact, config: SourceConfig) -> tuple[list[SourceJobRecord], ParseStats]:
         validate_config_type(config, JobStreetPHSourceConfig)
-        payload = json.loads(artifact.body_bytes.decode("utf-8"))
+        payload = _load_payload(artifact)
         jobs = payload.get("data", {}).get("jobs") if isinstance(payload.get("data"), dict) else payload.get("jobs")
         if not isinstance(jobs, list):
             raise ValueError("invalid_jobstreet_ph_payload")
@@ -87,3 +87,13 @@ def _format_amount(value: object) -> str | None:
 def _job_id_from_url(value: str) -> str:
     match = re.search(r"(\d{4,})", value)
     return match.group(1) if match else ""
+
+
+def _load_payload(artifact: FetchArtifact) -> dict:
+    try:
+        payload = json.loads(artifact.body_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("invalid_jobstreet_ph_payload") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("invalid_jobstreet_ph_payload")
+    return payload

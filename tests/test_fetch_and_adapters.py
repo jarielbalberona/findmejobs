@@ -110,6 +110,27 @@ def test_lever_adapter_parses_realistic_fixture(fixtures_dir: Path) -> None:
     assert records[0].location_text == "Remote, Philippines"
 
 
+def test_lever_adapter_coerces_epoch_millis_created_at() -> None:
+    artifact = FetchArtifact(
+        fetched_url="https://api.lever.co/v0/postings/example?mode=json",
+        final_url="https://api.lever.co/v0/postings/example?mode=json",
+        status_code=200,
+        content_type="application/json",
+        headers={},
+        fetched_at=utcnow(),
+        body_bytes=(
+            b'[{"id":"lever-2","text":"Platform Engineer","hostedUrl":"https://jobs.example.test/lever/platform",'
+            b'"createdAt":1742385600000,"categories":{"location":"Remote","commitment":"Full-time"}}]'
+        ),
+        sha256="sha",
+        storage_path="/tmp/lever-epoch.json",
+    )
+    config = LeverSourceConfig(name="lever-source", kind="lever", enabled=True, site="example")
+    records = LeverAdapter().parse(artifact, config)
+
+    assert records[0].posted_at_raw == "2025-03-19T12:00:00Z"
+
+
 def test_smartrecruiters_adapter_parses_realistic_fixture(fixtures_dir: Path) -> None:
     artifact = FetchArtifact(
         fetched_url="https://api.smartrecruiters.com/v1/companies/example/postings?limit=100",
@@ -134,6 +155,29 @@ def test_smartrecruiters_adapter_parses_realistic_fixture(fixtures_dir: Path) ->
     assert len(records) == 1
     assert records[0].source_job_key == "sr-1"
     assert records[0].company == "Example Corp"
+
+
+def test_smartrecruiters_adapter_coerces_nested_employment_and_tags() -> None:
+    artifact = FetchArtifact(
+        fetched_url="https://api.smartrecruiters.com/v1/companies/example/postings?limit=100",
+        final_url="https://api.smartrecruiters.com/v1/companies/example/postings?limit=100",
+        status_code=200,
+        content_type="application/json",
+        headers={},
+        fetched_at=utcnow(),
+        body_bytes=(
+            b'{"content":[{"id":"sr-2","name":"Backend Engineer","ref":"https://jobs.example.test/smart/backend",'
+            b'"releasedDate":"2026-03-18T10:00:00Z","typeOfEmployment":{"label":"Contract"},'
+            b'"department":{"label":"Engineering"},"tags":[{"label":"Remote"},{"name":"Platform"}]}]}'
+        ),
+        sha256="sha",
+        storage_path="/tmp/sr-nested.json",
+    )
+    config = SmartRecruitersSourceConfig(name="smart-source", kind="smartrecruiters", enabled=True, company_identifier="example")
+    records = SmartRecruitersAdapter().parse(artifact, config)
+
+    assert records[0].employment_type_raw == "Contract"
+    assert records[0].tags_raw == ["Engineering", "Contract", "Remote", "Platform"]
 
 
 def test_workable_adapter_parses_realistic_fixture(fixtures_dir: Path) -> None:

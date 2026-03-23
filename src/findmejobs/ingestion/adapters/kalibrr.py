@@ -19,7 +19,7 @@ class KalibrrAdapter(SourceAdapter):
 
     def parse_with_stats(self, artifact: FetchArtifact, config: SourceConfig) -> tuple[list[SourceJobRecord], ParseStats]:
         validate_config_type(config, KalibrrSourceConfig)
-        payload = json.loads(artifact.body_bytes.decode("utf-8"))
+        payload = _load_payload(artifact)
         jobs = payload.get("jobs") or payload.get("data", {}).get("jobs")
         if not isinstance(jobs, list):
             raise ValueError("invalid_kalibrr_payload")
@@ -120,3 +120,13 @@ def _list_text(value: object) -> list[str]:
 def _slug_from_url(value: str) -> str:
     match = re.search(r"/jobs/([^/?#]+)", value)
     return match.group(1) if match else ""
+
+
+def _load_payload(artifact: FetchArtifact) -> dict:
+    try:
+        payload = json.loads(artifact.body_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("invalid_kalibrr_payload") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("invalid_kalibrr_payload")
+    return payload

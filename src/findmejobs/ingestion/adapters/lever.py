@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 from findmejobs.config.models import LeverSourceConfig, SourceConfig
 from findmejobs.domain.source import FetchArtifact, SourceJobRecord
@@ -33,7 +34,7 @@ class LeverAdapter(SourceAdapter):
                     title=title,
                     company=_company_name(job, config.company_name),
                     location_text=str(categories.get("location", "")).strip(),
-                    posted_at_raw=job.get("createdAt"),
+                    posted_at_raw=_timestamp_text(job.get("createdAt")),
                     employment_type_raw=categories.get("commitment"),
                     seniority_raw=categories.get("team"),
                     description_raw=job.get("descriptionPlain") or job.get("description"),
@@ -50,3 +51,19 @@ def _company_name(job: dict, configured_company_name: str | None) -> str:
         if value:
             return value
     return configured_company_name or "Unknown"
+
+
+def _timestamp_text(value: object) -> str | None:
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        # Lever feeds sometimes return Unix epoch milliseconds instead of ISO strings.
+        timestamp = float(value)
+        if timestamp > 10_000_000_000:
+            timestamp /= 1000.0
+        try:
+            return datetime.fromtimestamp(timestamp, tz=UTC).isoformat().replace("+00:00", "Z")
+        except (OverflowError, OSError, ValueError):
+            return None
+    return None

@@ -4,8 +4,11 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
+import sys
 from pathlib import Path
 import tomllib
+
+REQUIRED_TABLES = ("normalized_jobs", "source_jobs", "sources")
 
 
 def _load_database_url(app_config_path: Path) -> str:
@@ -28,7 +31,12 @@ def _sqlite_path_from_url(database_url: str, app_config_path: Path) -> Path:
     return (app_config_path.parent.parent / path).resolve()
 
 
-def _query_job_details(db_path: Path, *, description_max_chars: int | None) -> dict[str, dict]:
+def _missing_required_tables(conn: sqlite3.Connection) -> list[str]:
+    table_names = {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    return [name for name in REQUIRED_TABLES if name not in table_names]
+
+
+def _query_job_details(db_path: Path, *, description_max_chars: int | None) -> tuple[dict[str, dict], list[str]]:
     sql = """
     SELECT
       nj.id AS job_id,
@@ -59,9 +67,19 @@ def _query_job_details(db_path: Path, *, description_max_chars: int | None) -> d
     WHERE nj.normalization_status = 'valid'
     """
     out: dict[str, dict] = {}
+    warnings: list[str] = []
     with sqlite3.connect(str(db_path)) as conn:
         conn.row_factory = sqlite3.Row
-        for row in conn.execute(sql):
+        missing_tables = _missing_required_tables(conn)
+        if missing_tables:
+            warnings.append(f"missing_required_tables:{','.join(missing_tables)}")
+            return out, warnings
+        try:
+            rows = conn.execute(sql)
+        except sqlite3.OperationalError as exc:
+            warnings.append(f"query_failed:{exc}")
+            return out, warnings
+        for row in rows:
             description = row["description_text"] or ""
             if description_max_chars is not None and description_max_chars > 0 and len(description) > description_max_chars:
                 description = description[:description_max_chars].rstrip() + "\n... [truncated]"
@@ -93,7 +111,7 @@ def _query_job_details(db_path: Path, *, description_max_chars: int | None) -> d
                 "tags": tags if isinstance(tags, list) else [],
                 "description_text": description,
             }
-    return out
+    return out, warnings
 
 
 def main() -> int:
@@ -107,12 +125,15 @@ def main() -> int:
     database_url = _load_database_url(app_config_path)
     db_path = _sqlite_path_from_url(database_url, app_config_path)
     max_chars = None if args.description_max_chars <= 0 else args.description_max_chars
-    jobs = _query_job_details(db_path, description_max_chars=max_chars)
+    jobs, warnings = _query_job_details(db_path, description_max_chars=max_chars)
 
-    payload = {"database_url": database_url, "db_path": str(db_path), "jobs": jobs}
+    payload = {"database_url": database_url, "db_path": str(db_path), "jobs": jobs, "warnings": warnings}
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    if warnings:
+        print("; ".join(warnings), file=sys.stderr)
+        return 1
     return 0
 
 

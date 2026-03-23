@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from findmejobs.config.loader import load_profile_config
+from findmejobs.profile_bootstrap.baseline import build_baseline_extraction
 from findmejobs.profile_bootstrap.extractor import _extract_file_text, prepare_paths
 from findmejobs.profile_bootstrap.models import ResumeExtractionDraft
 from findmejobs.profile_bootstrap.service import ProfileBootstrapService
@@ -106,6 +107,19 @@ def test_txt_and_markdown_extraction_work(fixtures_dir: Path) -> None:
     md, _, _ = _extract_file_text(fixtures_dir / "resume.md")
     assert "Jane Doe" in txt
     assert "Backend Engineer" in md
+
+
+def test_baseline_recent_roles_keeps_privv_after_summary_years_of_experience() -> None:
+    """Regression: 'years of experience' must not poison company capture for EXPERIENCE PRIVV — Title."""
+    resume = (
+        "JANE DOE SUMMARY Senior Engineer with 10 years of experience and strong depth. "
+        "CORE SKILLS Python AWS. "
+        "EXPERIENCE PRIVV — Senior Software Engineer (Full-time) "
+        "DataGPT AI — Software Engineer (Part-time)"
+    )
+    extraction = build_baseline_extraction("fixture-import", resume)
+    assert "PRIVV" in extraction.recent_companies
+    assert any("Senior Software Engineer" in t for t in extraction.recent_titles)
 
 
 def test_json_resume_extraction_work(fixtures_dir: Path) -> None:

@@ -26,6 +26,8 @@ PREFERRED_LOCATIONS_RE = re.compile(
 RECENT_ROLE_RE = re.compile(
     r"(?P<company>[A-Z][A-Za-z0-9&.,'()/+\- ]{1,80}?)\s+[—-]\s+(?P<title>[A-Z][A-Za-z0-9 /&.+\-]{2,80}?(?:Engineer|Developer|Architect|Lead|Manager|Consultant|Specialist|Administrator))(?=\s*(?:\(|[A-Z][a-z]{2}\s+\d{4}|Tech:|•|Page|\||$))"
 )
+_EXPERIENCE_HEADER_RE = re.compile(r"\bEXPERIENCE\s+", re.IGNORECASE)
+_WORK_EXPERIENCE_HEADER_RE = re.compile(r"\bWORK\s+EXPERIENCE\s+", re.IGNORECASE)
 LOCATION_RE = re.compile(
     r"(?P<location>(?:[A-Z][A-Za-z]+,\s*[A-Z][A-Za-z]+|Philippines(?:\s*\(Remote\))?|Singapore|Australia|Canada|United States|Remote(?:\s*\([^)]+\))?))"
 )
@@ -292,15 +294,56 @@ def _extract_location_preferences(text: str) -> tuple[list[str], list[str]]:
     return _dedupe(preferred_locations), _dedupe(allowed_countries)
 
 
+def _work_experience_segment(text: str) -> str:
+    """Isolate the work-history block so RECENT_ROLE_RE does not latch onto stray em dashes in skills/summary."""
+    if not text:
+        return text
+    start_idx: int | None = None
+    work_match = _WORK_EXPERIENCE_HEADER_RE.search(text)
+    if work_match:
+        start_idx = work_match.start()
+    else:
+        for marker in _EXPERIENCE_HEADER_RE.finditer(text):
+            prefix = text[max(0, marker.start() - 48) : marker.start()]
+            if re.search(r"\bof\s+$", prefix, re.IGNORECASE):
+                continue
+            start_idx = marker.start()
+            break
+    if start_idx is None:
+        return text
+    segment = text[start_idx:]
+    upper = segment.upper()
+    for end_marker in (
+        "PRODUCT ENGINEERING",
+        "EARLIER EXPERIENCE",
+        "SELECTED WORK",
+        "PROJECT HIGHLIGHTS",
+        "EDUCATION",
+        "PAGE 1/2",
+        "PAGE 2/2",
+    ):
+        idx = upper.find(end_marker)
+        if idx != -1:
+            segment = segment[:idx]
+            upper = segment.upper()
+    return segment
+
+
 def _extract_recent_roles(text: str) -> tuple[list[str], list[str]]:
+    window = _work_experience_segment(text)
     companies: list[str] = []
     titles: list[str] = []
-    for match in RECENT_ROLE_RE.finditer(text):
+    for match in RECENT_ROLE_RE.finditer(window):
         company = collapse_whitespace(match.group("company"))
         if ")" in company:
             company = collapse_whitespace(company.rsplit(")", 1)[-1])
+        company = collapse_whitespace(re.sub(r"(?i)^experience\s+", "", company))
+        if ". " in company and len(company) > 35:
+            tail = collapse_whitespace(company.rsplit(". ", 1)[-1])
+            if tail and tail[0].isupper() and len(tail) <= 55:
+                company = tail
         title = collapse_whitespace(match.group("title"))
-        if any(token in company.casefold() for token in ("experience", "prompt", "page 1/2", "page 2/2", "remote (")):
+        if any(token in company.casefold() for token in ("prompt", "page 1/2", "page 2/2", "remote (")):
             continue
         if not company:
             continue
